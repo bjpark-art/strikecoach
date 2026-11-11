@@ -1,0 +1,12 @@
+{
+  "name": "StrikeCoach",
+  "short_name": "StrikeCoach",
+  "description": "AI 킥복싱 자세 피드백",
+  "lang": "ko",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#EEF0F3",
+  "theme_color": "#EE4B3B",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
