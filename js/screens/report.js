@@ -1,4 +1,6 @@
 import { getSession, listSessions, saveSession } from '../store.js';
+import { getFrames } from '../db.js';
+import { analyzeFrames, sessionStats } from '../analysis/offline.js';
 import { icon, fmtTime } from '../ui/icons.js';
 
 function topErrors(s) {
@@ -34,7 +36,7 @@ export function mount(root, ctx) {
   root.innerHTML = `
   <section class="screen">
     <div class="head"><button class="icon-btn" data-home aria-label="홈으로">${icon('back')}</button><h1>세션 리포트</h1>
-      <span class="small muted">${dateLabel}${s.source === 'demo' ? ' · 데모' : ''}</span></div>
+      <span class="small muted">${dateLabel}${s.source === 'demo' ? ' · 데모' : s.source === 'video' ? ' · 영상 분석' : ''}</span></div>
     <div class="body">
       <div class="card score">
         <svg class="ring" viewBox="0 0 96 96" role="img" aria-label="가드 유지율 ${s.guardPct ?? '측정 안 됨'}%">
@@ -77,6 +79,14 @@ export function mount(root, ctx) {
           ${tech.map(([n, v, k]) => `<div class="bar"><span>${n}</span><div class="track"><div class="fill ${k ? 'kick' : ''}" style="width:${v / max * 100}%"></div></div><span class="num" style="text-align:right">${v}</span></div>`).join('')}
         </div>
         <div class="notice" style="margin-top:12px">지금 버전은 곧게 뻗는 펀치(잽·크로스)와 킥만 셉니다. 훅·어퍼컷 구분은 다음 버전에서 추가돼요.</div>
+        ${s.actual && Object.values(s.actual).some((v) => v != null) ? `
+          <div class="small muted" style="margin-top:12px">실제 횟수와 비교</div>
+          <div class="cmp-table">
+            ${[['잽', s.actual.jab, s.punches.jab], ['크로스', s.actual.cross, s.punches.cross], ['킥', s.actual.kick, s.totalKicks], ['가드 하락', s.actual.drop, s.guardDrops.lead + s.guardDrops.rear]]
+              .filter(([, a]) => a != null).map(([n, a, app]) => `<span>${n}</span><span class="num">실제 ${a}</span><span class="num">앱 ${app}</span>`).join('')}
+          </div>` : ''}
+        ${s.source === 'video' && s.framesSaved !== false ? `
+          <div style="margin-top:8px"><button class="link" id="flip">잽과 크로스가 반대로 나왔나요? ${s.stance === 'southpaw' ? '오소독스' : '사우스포'}로 다시 계산</button></div>` : ''}
       </div>
 
       <div class="card">
@@ -88,13 +98,26 @@ export function mount(root, ctx) {
       </div>
       <div class="row">
         <button class="btn btn-ghost grow" data-home>홈으로</button>
-        <button class="btn btn-primary grow" id="again">${icon('play')}다시 훈련</button>
+        ${s.source === 'video'
+          ? `<button class="btn btn-primary grow" id="review">${icon('play')}영상 리뷰</button>`
+          : `<button class="btn btn-primary grow" id="again">${icon('play')}다시 훈련</button>`}
       </div>
     </div>
   </section>`;
 
   root.querySelectorAll('[data-home]').forEach((b) => b.addEventListener('click', () => ctx.go('home')));
-  root.querySelector('#again').addEventListener('click', () => ctx.go('setup'));
+  root.querySelector('#again')?.addEventListener('click', () => ctx.go('setup'));
+  root.querySelector('#review')?.addEventListener('click', () => { ctx.reportId = s.id; ctx.go('review'); });
+  root.querySelector('#flip')?.addEventListener('click', async (e) => {
+    e.currentTarget.disabled = true;
+    const buf = await getFrames(s.id);
+    if (!buf) { e.currentTarget.textContent = '분석 데이터가 없어 다시 계산할 수 없어요'; return; }
+    const stance = s.stance === 'southpaw' ? 'orthodox' : 'southpaw';
+    const { summary } = analyzeFrames(buf, { stance, level: s.level });
+    saveSession({ ...s, stance, ...sessionStats(summary) });
+    ctx.reportId = s.id;
+    mount(root, ctx);
+  });
   root.querySelector('#rate').addEventListener('click', (e) => {
     const b = e.target.closest('[data-v]');
     if (!b) return;

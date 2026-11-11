@@ -4,14 +4,17 @@ import * as home from './screens/home.js';
 import * as setup from './screens/setup.js';
 import * as live from './screens/live.js';
 import * as report from './screens/report.js';
+import * as upload from './screens/upload.js';
+import * as review from './screens/review.js';
 
-const routes = { onboarding, home, setup, live, report };
+const routes = { onboarding, home, setup, live, report, upload, review };
 const root = document.getElementById('app');
 
 // 화면 사이에 넘기는 상태. 카메라 소스는 촬영 준비 → 실시간 훈련까지 이어서 쓴다.
 const ctx = {
   source: null,
   reportId: null,
+  videoFile: null,   // 영상 리뷰용. 영상은 저장하지 않으므로 이번 방문 동안만 기억한다.
   go,
 };
 

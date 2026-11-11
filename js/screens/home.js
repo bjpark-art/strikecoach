@@ -46,9 +46,13 @@ export function mount(root, ctx) {
           <span class="ic">${icon('wave')}</span>
           <span class="grow"><b>섀도 드릴</b><span class="muted small">곧 추가돼요</span></span>
         </button>
-        <button class="mode" disabled>
+        <button class="mode" id="video">
           <span class="ic">${icon('upload')}</span>
-          <span class="grow"><b>스파링 리뷰</b><span class="muted small">곧 추가돼요</span></span>
+          <span class="grow"><b>영상 분석</b><span class="muted small">찍어둔 훈련 영상을 올려 리뷰 (1인)</span></span>
+        </button>
+        <button class="mode" disabled>
+          <span class="ic">${icon('target')}</span>
+          <span class="grow"><b>스파링 리뷰 (2인)</b><span class="muted small">곧 추가돼요</span></span>
         </button>
       </div>
 
@@ -58,7 +62,7 @@ export function mount(root, ctx) {
           ${sessions.length ? sessions.slice(0, 5).map((s) => `
             <button class="mode" data-id="${s.id}">
               <span class="ic num" style="font-weight:800;font-size:13px">${dateLabel(s.date)}</span>
-              <span class="grow"><b>미트 훈련${s.source === 'demo' ? ' · 데모' : ''}</b><span class="muted small">펀치 ${s.totalPunches} · 킥 ${s.totalKicks} · 가드 하락 ${s.guardDrops.lead + s.guardDrops.rear}회</span></span>
+              <span class="grow"><b>${s.source === 'video' ? '영상 분석' : '미트 훈련' + (s.source === 'demo' ? ' · 데모' : '')}</b><span class="muted small">펀치 ${s.totalPunches} · 킥 ${s.totalKicks} · 가드 하락 ${s.guardDrops.lead + s.guardDrops.rear}회</span></span>
               <span class="pill ${s.guardPct != null && s.guardPct >= 75 ? 'good' : 'warn'}">${s.guardPct != null ? '가드 ' + s.guardPct + '%' : '인식 부족'}</span>
             </button>`).join('') : `<div class="card empty muted">아직 기록이 없어요. 첫 미트 훈련을 시작해 보세요.</div>`}
         </div>
@@ -67,6 +71,7 @@ export function mount(root, ctx) {
   </section>`;
 
   root.querySelector('#mitt').addEventListener('click', () => ctx.go('setup'));
+  root.querySelector('#video').addEventListener('click', () => ctx.go('upload'));
   root.querySelector('#settings').addEventListener('click', () => ctx.go('onboarding'));
   root.querySelector('#recent').addEventListener('click', (e) => {
     const b = e.target.closest('[data-id]');

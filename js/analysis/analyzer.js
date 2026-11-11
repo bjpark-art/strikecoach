@@ -29,7 +29,7 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner' } = {})
   const slack = GUARD_SLACK[level] ?? 0.2;
 
   const arm = { l: { ext: false, last: -1e9, retract: -1e9 }, r: { ext: false, last: -1e9, retract: -1e9 } };
-  const hand = { l: { badSince: null, reported: false }, r: { badSince: null, reported: false } };
+  const hand = { l: { badSince: null, reported: false, worst: 0 }, r: { badSince: null, reported: false, worst: 0 } };
   const leg = { l: { up: false, last: -1e9 }, r: { up: false, last: -1e9 } };
 
   const s = {
@@ -61,6 +61,7 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner' } = {})
     const shY = (world[LM.lSh].y + world[LM.rSh].y) / 2;
     const guardLine = shY + slack * T; // y는 아래로 증가: 손목 y가 이보다 작으면 가드가 올라간 상태
     const ok = {};
+    const below = {}; // 손목이 가드 라인보다 얼마나 아래인지(미터, +면 아래)
 
     for (const sd of ['l', 'r']) {
       const m = armMetrics(world, sd, T);
@@ -77,17 +78,22 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner' } = {})
         a.retract = t;
       }
       ok[sd] = m.wrist.y < guardLine || a.ext || t - a.retract < RETURN_GRACE_MS;
+      below[sd] = m.wrist.y - guardLine;
     }
 
     let hot = null;
     for (const sd of ['l', 'r']) {
       const h = hand[sd];
       if (ok[sd]) {
+        if (h.reported) {
+          events.push({ type: 'guardRecover', hand: role[sd], t: t - startT, downMs: Math.round(t - h.badSince), belowCm: Math.max(0, Math.round(h.worst * 100)) });
+        }
         h.badSince = null;
         h.reported = false;
         continue;
       }
-      if (h.badSince == null) h.badSince = t;
+      if (h.badSince == null) { h.badSince = t; h.worst = 0; }
+      h.worst = Math.max(h.worst, below[sd]);
       if (!h.reported && t - h.badSince >= GUARD_DROP_MS) {
         h.reported = true;
         s.guardDrops[role[sd]]++;

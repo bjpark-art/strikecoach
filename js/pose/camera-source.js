@@ -1,32 +1,5 @@
 // 전면 카메라 + MediaPipe Pose Landmarker(온디바이스, 브라우저 WASM/GPU).
-const VERSION = '0.10.14';
-const CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${VERSION}`;
-const MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
-
-let landmarkerPromise = null;
-
-function getLandmarker() {
-  if (!landmarkerPromise) {
-    landmarkerPromise = (async () => {
-      const vision = await import(`${CDN}/vision_bundle.mjs`);
-      const files = await vision.FilesetResolver.forVisionTasks(`${CDN}/wasm`);
-      const make = (delegate) => vision.PoseLandmarker.createFromOptions(files, {
-        baseOptions: { modelAssetPath: MODEL, delegate },
-        runningMode: 'VIDEO',
-        numPoses: 1,
-      });
-      // GPU(WebGL)를 못 쓰는 PC가 있어서 실패하면 CPU로 다시 만든다.
-      try {
-        return await make('GPU');
-      } catch (e) {
-        console.warn('GPU 모드 실패, CPU로 재시도', e);
-        return await make('CPU');
-      }
-    })();
-    landmarkerPromise.catch(() => { landmarkerPromise = null; });
-  }
-  return landmarkerPromise;
-}
+import { getLandmarker, detect } from './landmarker.js';
 
 export class CameraError extends Error {}
 
@@ -65,10 +38,10 @@ export async function createCameraSource({ deviceId = null } = {}) {
   }
   let stream;
   try {
-    const video = deviceId
+    const constraints = deviceId
       ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
       : { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } };
-    stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+    stream = await navigator.mediaDevices.getUserMedia({ video: constraints, audio: false });
   } catch (first) {
     // 일부 PC 웹캠은 facingMode/해상도 조건을 못 맞춘다 → 조건 없이 한 번 더.
     const retryable = first && (first.name === 'OverconstrainedError' || first.name === 'NotFoundError' || first.name === 'NotReadableError' || first.name === 'AbortError');
@@ -102,10 +75,7 @@ export async function createCameraSource({ deviceId = null } = {}) {
     if (handler && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
       lastVideoTime = video.currentTime;
       const now = performance.now();
-      const r = landmarker.detectForVideo(video, now);
-      const image = r.landmarks?.[0] || null;
-      const world = r.worldLandmarks?.[0] || null;
-      if (image && world) world.forEach((p, i) => { if (p.visibility == null) p.visibility = image[i].visibility; });
+      const { image, world } = detect(landmarker, video, now);
       handler({ t: now, image, world });
     }
     raf = requestAnimationFrame(loop);

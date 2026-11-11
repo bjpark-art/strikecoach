@@ -2,6 +2,8 @@ import { createAnalyzer } from '../analysis/analyzer.js';
 import { createCueEngine } from '../feedback/cues.js';
 import { demoFrameAt, DEMO_LOOP_SEC } from '../pose/demo-source.js';
 import { framingStatus } from '../ui/skeleton.js';
+import { createPacker, unpackFrame, frameCount, findFrame, PACK_JOINTS } from '../pose/frames.js';
+import { analyzeFrames, guardDropIntervals } from '../analysis/offline.js';
 
 const results = [];
 function test(name, fn) {
@@ -111,6 +113,54 @@ test('촬영 프레이밍: 데모 자세는 전신이 보임, 발이 잘리면 �
   f.image[27].y = 1.1;
   const st = framingStatus(f.image);
   ok(!st.ok && st.msg.includes('뒤로'), '뒤로 가라는 안내여야 함');
+});
+
+test('프레임 저장 형식: 저장했다 꺼낸 값이 원래 좌표와 같음', () => {
+  const p = createPacker(4);
+  const f = demoFrameAt(0.65);
+  p.push(f);
+  p.push({ t: 50, image: null, world: null });
+  const buf = p.finish();
+  eq(frameCount(buf), 2, '프레임 수');
+  const u = unpackFrame(buf, 0);
+  for (const idx of PACK_JOINTS) {
+    ok(Math.abs(u.world[idx].x - f.world[idx].x) < 1e-5 && Math.abs(u.image[idx].y - f.image[idx].y) < 1e-5, `관절 ${idx} 좌표`);
+  }
+  eq(unpackFrame(buf, 1).image, null, '사람 없는 프레임');
+});
+
+test('저장 형식으로 다시 분석해도 실시간 분석과 결과가 같음', () => {
+  const p = createPacker(10);
+  for (let i = 0; i <= (DEMO_LOOP_SEC - 0.05) * 20; i++) p.push(demoFrameAt(i / 20));
+  const buf = p.finish();
+  const { summary, tracked } = analyzeFrames(buf, { stance: 'orthodox' });
+  eq(summary.punches, { jab: 4, cross: 3 }, '펀치');
+  eq(summary.kicks, { lead: 0, rear: 1 }, '킥');
+  eq(summary.guardDrops, { lead: 0, rear: 1 }, '가드 하락');
+  eq(tracked.every((x) => x === 1), true, '전부 추적');
+  const flipped = analyzeFrames(buf, { stance: 'southpaw' }).summary;
+  eq(flipped.punches, { jab: 3, cross: 4 }, '스탠스 바꿔 다시 계산');
+});
+
+test('가드 하락 구간: 시작·끝·지속시간·깊이를 기록', () => {
+  const p = createPacker(10);
+  for (let i = 0; i <= (DEMO_LOOP_SEC - 0.05) * 30; i++) p.push(demoFrameAt(i / 30));
+  const { summary } = analyzeFrames(p.finish());
+  const iv = guardDropIntervals(summary.events, DEMO_LOOP_SEC * 1000);
+  eq(iv.length, 1, '구간 수');
+  const d = iv[0];
+  eq(d.hand, 'rear', '손');
+  ok(d.start > 3800 && d.start < 4000, `시작 3.8~4.0초 (실제 ${d.start})`);
+  ok(d.end > 4900 && d.end < 5100, `끝 4.9~5.1초 (실제 ${d.end})`);
+  ok(d.downMs > 900 && d.downMs < 1250, `지속 약 1초 (실제 ${d.downMs})`);
+  ok(d.belowCm >= 10 && d.belowCm <= 25, `깊이 10~25cm (실제 ${d.belowCm})`);
+});
+
+test('영상 시점으로 프레임 찾기', () => {
+  const p = createPacker(4);
+  [0, 50, 100, 150].forEach((t) => p.push({ t, image: null, world: null }));
+  const buf = p.finish();
+  eq([findFrame(buf, 0), findFrame(buf, 49), findFrame(buf, 50), findFrame(buf, 999)], [0, 0, 1, 3], '프레임 번호');
 });
 
 const failed = results.filter((r) => !r[1]);
