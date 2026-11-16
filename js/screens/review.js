@@ -15,7 +15,9 @@ const FIX = {
   lead: '뻗은 길 그대로 앞손을 턱 앞으로 되돌리세요.',
 };
 const SPEEDS = [0.25, 0.5, 1];
-const SUBJ = { jab: '잽이', cross: '크로스가', kick: '킥이' };
+const SUBJ = { jab: '잽이', cross: '크로스가', hook: '훅이', uppercut: '어퍼컷이', kick: '킥이' };
+// 판정 보정 데이터 내보내기는 개발자용. 콘솔에서 localStorage.setItem('strikecoach.dev', '1')로 켠다.
+const devMode = () => { try { return localStorage.getItem('strikecoach.dev') === '1'; } catch (_) { return false; } };
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
 export function mount(root, ctx) {
@@ -160,7 +162,7 @@ export function mount(root, ctx) {
       </div>
       ${spar ? `<button class="link" id="swap">이 시점부터 나와 상대가 바뀌어 보이면 눌러주세요 (두 사람 바꾸기)</button>` : ''}
       <div class="card detail" id="detail"></div>
-      ${calibHtml()}`;
+      ${devMode() ? calibHtml() : ''}`;
 
     video = $('#vid');
     video.src = url;
@@ -209,7 +211,7 @@ export function mount(root, ctx) {
       video.currentTime = (Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * durMs) / 1000;
     });
     $('#swap')?.addEventListener('click', swapHere);
-    $('#export').addEventListener('click', exportData);
+    $('#export')?.addEventListener('click', exportData);
     root.querySelectorAll('#result .chip').forEach((b) => b.addEventListener('click', () => {
       root.querySelectorAll('#result .chip').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
     }));

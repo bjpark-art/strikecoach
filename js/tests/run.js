@@ -9,6 +9,8 @@ import { createTracker, swapFrom } from '../sparring/tracker.js';
 import { inferStance, detectHits, pressure } from '../sparring/interaction.js';
 import { scoreRounds, splitRounds } from '../sparring/judge.js';
 import { analyzeSparring } from '../sparring/analyze.js';
+import { punchFeatures, classifyFeatures, cocoFrame } from '../analysis/punch-classifier.js';
+import FIXTURE from './punch-fixture.js';
 
 const results = [];
 function test(name, fn) {
@@ -19,6 +21,7 @@ function eq(actual, expected, label) {
   if (a !== b) throw new Error(`${label}: 기대 ${b}, 실제 ${a}`);
 }
 function ok(cond, label) { if (!cond) throw new Error(label); }
+const jc = (p) => ({ jab: p.jab, cross: p.cross });
 
 function runDemo(seconds, { stance = 'orthodox', level = 'beginner', fps = 30 } = {}) {
   const an = createAnalyzer({ stance, level });
@@ -28,7 +31,7 @@ function runDemo(seconds, { stance = 'orthodox', level = 'beginner', fps = 30 } 
 
 test('데모 1루프: 잽 4, 크로스 3, 뒷발 킥 1, 뒷손 가드 하락 1', () => {
   const s = runDemo(DEMO_LOOP_SEC - 0.05);
-  eq(s.punches, { jab: 4, cross: 3 }, '펀치');
+  eq(jc(s.punches), { jab: 4, cross: 3 }, '펀치');
   eq(s.kicks, { lead: 0, rear: 1 }, '킥');
   eq(s.guardDrops, { lead: 0, rear: 1 }, '가드 하락');
   ok(s.guardPct >= 80 && s.guardPct <= 95, `가드 유지율 80~95% 사이여야 함 (실제 ${s.guardPct}%)`);
@@ -37,14 +40,14 @@ test('데모 1루프: 잽 4, 크로스 3, 뒷발 킥 1, 뒷손 가드 하락 1',
 
 test('데모 2루프: 횟수가 두 배', () => {
   const s = runDemo(DEMO_LOOP_SEC * 2 - 0.05);
-  eq(s.punches, { jab: 8, cross: 6 }, '펀치');
+  eq(jc(s.punches), { jab: 8, cross: 6 }, '펀치');
   eq(s.kicks.rear, 2, '뒷발 킥');
   eq(s.guardDrops.rear, 2, '뒷손 가드 하락');
 });
 
 test('사우스포: 좌우가 바뀌어도 잽/크로스 구분이 같음', () => {
   const s = runDemo(DEMO_LOOP_SEC - 0.05, { stance: 'southpaw' });
-  eq(s.punches, { jab: 4, cross: 3 }, '펀치');
+  eq(jc(s.punches), { jab: 4, cross: 3 }, '펀치');
   eq(s.kicks, { lead: 0, rear: 1 }, '킥');
   eq(s.guardDrops, { lead: 0, rear: 1 }, '가드 하락');
 });
@@ -52,7 +55,7 @@ test('사우스포: 좌우가 바뀌어도 잽/크로스 구분이 같음', () =
 test('스탠스 설정이 실제와 반대면 잽/크로스가 뒤바뀜', () => {
   const an = createAnalyzer({ stance: 'southpaw' });
   for (let i = 0; i <= (DEMO_LOOP_SEC - 0.05) * 30; i++) an.update(demoFrameAt(i / 30, 'orthodox'));
-  eq(an.summary().punches, { jab: 3, cross: 4 }, '펀치');
+  eq(jc(an.summary().punches), { jab: 3, cross: 4 }, '펀치');
 });
 
 test('중급자 기준에서도 데모 가드는 유지로 판정', () => {
@@ -141,12 +144,12 @@ test('저장 형식으로 다시 분석해도 실시간 분석과 결과가 같�
   for (let i = 0; i <= (DEMO_LOOP_SEC - 0.05) * 20; i++) p.push(demoFrameAt(i / 20));
   const buf = p.finish();
   const { summary, tracked } = analyzeFrames(buf, { stance: 'orthodox' });
-  eq(summary.punches, { jab: 4, cross: 3 }, '펀치');
+  eq(jc(summary.punches), { jab: 4, cross: 3 }, '펀치');
   eq(summary.kicks, { lead: 0, rear: 1 }, '킥');
   eq(summary.guardDrops, { lead: 0, rear: 1 }, '가드 하락');
   eq(tracked.every((x) => x === 1), true, '전부 추적');
   const flipped = analyzeFrames(buf, { stance: 'southpaw' }).summary;
-  eq(flipped.punches, { jab: 3, cross: 4 }, '스탠스 바꿔 다시 계산');
+  eq(jc(flipped.punches), { jab: 3, cross: 4 }, '스탠스 바꿔 다시 계산');
 });
 
 test('가드 하락 구간: 시작·끝·지속시간·깊이를 기록', () => {
@@ -179,7 +182,7 @@ test('상체 모드: 엉덩이·다리가 안 보여도 펀치와 가드는 판�
   for (let i = 0; i <= (DEMO_LOOP_SEC - 0.05) * 30; i++) mode = an.update(hideLower(demoFrameAt(i / 30))).mode;
   const s = an.summary();
   eq(mode, 'upper', '모드');
-  eq(s.punches, { jab: 4, cross: 3 }, '펀치');
+  eq(jc(s.punches), { jab: 4, cross: 3 }, '펀치');
   eq(s.guardDrops, { lead: 0, rear: 1 }, '가드 하락');
   eq(s.totalKicks, 0, '킥은 세지 않음');
   eq(s.upperPct, 100, '상체 모드 비율');
@@ -286,6 +289,39 @@ test('스파링 분석 전체: 데모 영상에서 판정과 신뢰도가 나옴
   eq(r.judge.confidence, 'high', '신뢰도');
   ok(['me', 'opp', 'draw'].includes(r.judge.verdict), '판정');
   ok(r.hits.some((h) => h.by === 'me') && r.hits.some((h) => h.by === 'opp'), '양쪽 유효타 후보');
+});
+
+// ---------- 펀치 종류 분류기 (BoxingVI 학습) ----------
+test('분류기: JS 특징·확률이 파이썬 학습 코드와 일치', () => {
+  for (const fx of FIXTURE) {
+    const clip = fx.clip.map((f) => f.map((p) => (p[0] > 0 && p[1] > 0 ? p : null)));
+    const r = punchFeatures(clip);
+    ok(r, `${fx.kind} 특징 계산`);
+    eq(r.features.length, fx.features.length, `${fx.kind} 특징 수`);
+    const maxDiff = Math.max(...r.features.map((v, i) => Math.abs(v - fx.features[i])));
+    ok(maxDiff < 1e-6, `${fx.kind} 특징 차이 ${maxDiff}`);
+    const c = classifyFeatures(r.features);
+    const pd = Math.max(...c.probs.map((v, i) => Math.abs(v - fx.proba[i])));
+    ok(pd < 1e-4, `${fx.kind} 확률 차이 ${pd}`);
+  }
+});
+
+test('분류기: MediaPipe 좌표를 COCO 순서로 바꿈', () => {
+  const f = cocoFrame(demoFrameAt(0).image);
+  ok(f[5] && f[6] && f[9] && f[10] && f[11], '어깨·손목·엉덩이');
+  eq(f[1], null, '쓰지 않는 관절');
+});
+
+test('훅·어퍼컷 감지: 데모(잽·크로스·킥·가드 하락)에서는 하나도 세지 않음', () => {
+  for (const stance of ['orthodox', 'southpaw']) {
+    const an = createAnalyzer({ stance });
+    for (let i = 0; i <= (DEMO_LOOP_SEC * 2 - 0.05) * 30; i++) an.update(demoFrameAt(i / 30, stance));
+    const p = an.summary().punches;
+    eq([p.hook, p.uppercut], [0, 0], `${stance} 훅·어퍼컷`);
+  }
+  const d = sparBuffers(DEMO_LOOP_SEC);
+  const p = analyzeFrames(d.a).summary.punches;
+  eq([p.hook, p.uppercut], [0, 0], '옆모습 데모');
 });
 
 const failed = results.filter((r) => !r[1]);

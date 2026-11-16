@@ -10,7 +10,7 @@ const VERDICT = {
   hold: { title: '판정 보류', cls: 'hold' },
 };
 const CONF = { high: '신뢰도 높음', medium: '신뢰도 보통', low: '신뢰도 낮음' };
-const KIND_SUBJ = { jab: '잽이', cross: '크로스가', kick: '킥이' };
+const KIND_SUBJ = { jab: '잽이', cross: '크로스가', hook: '훅이', uppercut: '어퍼컷이', kick: '킥이' };
 const STANCE = { orthodox: '오소독스', southpaw: '사우스포' };
 
 export function mount(root, ctx) {
@@ -100,7 +100,7 @@ export function mount(root, ctx) {
         내 스탠스: ${STANCE[s.stance]}${s.meStanceManual ? '' : ' (자동 추정)'} · 상대: ${STANCE[s.oppStance]} (자동 추정)
         <button class="link" id="flip">내 스탠스 바꿔서 다시 계산</button>
       </div>
-      <div class="notice">지금 버전은 곧게 뻗는 펀치(잽·크로스)와 킥만 셉니다. 훅·어퍼컷, 블록·슬립 같은 방어, 클린치, 니·엘보는 판정에 들어가지 않아요.</div>
+      <div class="notice">훅·어퍼컷은 손목 움직임으로 추정해요(공개 데이터로 학습, 처음 보는 영상 기준 약 72% 정확도). 확신이 낮은 동작은 세지 않아요. 블록·슬립 같은 방어, 클린치, 니·엘보는 판정에 들어가지 않아요.</div>
 
       <div class="row">
         <button class="btn btn-ghost grow" data-home>홈으로</button>

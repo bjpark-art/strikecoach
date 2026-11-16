@@ -30,7 +30,7 @@ export function mount(root, ctx) {
   const g = s.guardPct ?? 0;
   const C = 2 * Math.PI * 40;
   const errs = topErrors(s);
-  const tech = [['잽', s.punches.jab, false], ['크로스', s.punches.cross, false], ['앞발 킥', s.kicks.lead, true], ['뒷발 킥', s.kicks.rear, true]];
+  const tech = [['잽', s.punches.jab, false], ['크로스', s.punches.cross, false], ['훅', s.punches.hook || 0, false], ['어퍼컷', s.punches.uppercut || 0, false], ['앞발 킥', s.kicks.lead, true], ['뒷발 킥', s.kicks.rear, true]];
   const max = Math.max(1, ...tech.map((t) => t[1]));
   const durMs = Math.max(1, s.durationSec * 1000);
 
@@ -79,7 +79,7 @@ export function mount(root, ctx) {
         <div class="bars">
           ${tech.map(([n, v, k]) => `<div class="bar"><span>${n}</span><div class="track"><div class="fill ${k ? 'kick' : ''}" style="width:${v / max * 100}%"></div></div><span class="num" style="text-align:right">${v}</span></div>`).join('')}
         </div>
-        <div class="notice" style="margin-top:12px">지금 버전은 곧게 뻗는 펀치(잽·크로스)와 킥만 셉니다. 훅·어퍼컷 구분은 다음 버전에서 추가돼요.</div>
+        <div class="notice" style="margin-top:12px">훅·어퍼컷은 손목 움직임으로 추정해요(공개 데이터로 학습, 처음 보는 영상 기준 약 72% 정확도). 확신이 낮은 동작은 세지 않아요.</div>
         ${s.upperPct > 30 ? `<div class="notice" style="margin-top:8px">${s.upperPct}% 구간은 상체만 보여서 킥을 세지 않았고, 펀치·가드도 전신일 때보다 덜 정확할 수 있어요.</div>` : ''}
         ${s.actual && Object.values(s.actual).some((v) => v != null) ? `
           <div class="small muted" style="margin-top:12px">실제 횟수와 비교</div>

@@ -1,4 +1,5 @@
 import { LM, allVisible, torso, armMetrics, dist } from './geometry.js';
+import { createStrikeDetector } from './punch-classifier.js';
 
 // 가드 판정 여유(몸통 길이 배수). 입문자는 너그럽게, 중급자는 엄격하게 (PRD 7절).
 const GUARD_SLACK = { beginner: 0.25, intermediate: 0.1 };
@@ -13,6 +14,9 @@ const GUARD_DROP_MS = 400;     // 이만큼 계속 내려가 있어야 오류로
 const KICK_MIN_GAP_MS = 400;
 // 상체 모드: 엉덩이가 안 보이면 몸통 길이 대신 3D 어깨 너비 × 이 비율을 기준 길이로 쓴다.
 export const UPPER_TORSO_RATIO = 1.4;
+// 훅·어퍼컷: 2D 타격 구간을 분류기가 이 확률 이상으로 판정해야 센다
+export const CURVED_MIN_PROB = 0.55;
+const STRAIGHT_OVERLAP_MS = 150;
 
 const CORE = [LM.lSh, LM.rSh, LM.lEl, LM.rEl, LM.lWr, LM.rWr];
 const HIPS = [LM.lHip, LM.rHip];
@@ -26,7 +30,7 @@ export function sidesFor(stance) {
  * 프레임 단위 자세 분석기.
  * frame = { t: ms, world: 3D 랜드마크(미터, y 아래 방향), image: 정규화 랜드마크(가시성 판단용) }
  */
-export function createAnalyzer({ stance = 'orthodox', level = 'beginner' } = {}) {
+export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved = true } = {}) {
   const { lead, rear } = sidesFor(stance);
   const role = { [lead]: 'lead', [rear]: 'rear' };
   const slack = GUARD_SLACK[level] ?? 0.2;
@@ -37,13 +41,16 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner' } = {})
 
   const s = {
     frames: 0, tracked: 0, upper: 0, guardOk: 0, activeMs: 0,
-    punches: { jab: 0, cross: 0 },
+    punches: { jab: 0, cross: 0, hook: 0, uppercut: 0 },
     kicks: { lead: 0, rear: 0 },
     guardDrops: { lead: 0, rear: 0 },
     events: [],
   };
   let lastT = null;
   let startT = null;
+  const strikes = curved ? createStrikeDetector() : null;
+  const straightTimes = { l: [], r: [] };
+  const recoverTimes = { l: [], r: [] }; // 가드 하락에서 손을 다시 올린 시점 (어퍼컷으로 오인하지 않게)
 
   function update(frame) {
     const { t, world, image } = frame;
@@ -77,6 +84,8 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner' } = {})
         a.last = t;
         const kind = role[sd] === 'lead' ? 'jab' : 'cross';
         s.punches[kind]++;
+        straightTimes[sd].push(t);
+        if (straightTimes[sd].length > 10) straightTimes[sd].shift();
         events.push({ type: 'punch', kind, hand: role[sd], side: sd, t: t - startT });
       } else if (a.ext && (m.straight < RETRACT_STRAIGHT || m.reach < RETRACT_REACH)) {
         a.ext = false;
@@ -91,6 +100,8 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner' } = {})
       const h = hand[sd];
       if (ok[sd]) {
         if (h.reported) {
+          recoverTimes[sd].push(t);
+          if (recoverTimes[sd].length > 5) recoverTimes[sd].shift();
           events.push({ type: 'guardRecover', hand: role[sd], t: t - startT, downMs: Math.round(t - h.badSince), belowCm: Math.max(0, Math.round(h.worst * 100)) });
         }
         h.badSince = null;
@@ -127,6 +138,19 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner' } = {})
       }
     }
 
+    // 훅·어퍼컷: 손목이 빠르게 움직인 2D 구간을 분류. 같은 팔의 스트레이트와 겹치면 세지 않는다.
+    if (strikes) {
+      for (const st of strikes.update(t, image)) {
+        if (st.label === 'straight' || st.prob < CURVED_MIN_PROB) continue;
+        const overlaps = straightTimes[st.side].some((x) => x >= st.start - STRAIGHT_OVERLAP_MS && x <= st.end + STRAIGHT_OVERLAP_MS);
+        if (overlaps) continue;
+        const recovering = recoverTimes[st.side].some((x) => x >= st.start - 300 && x <= st.end + 100) || hand[st.side].reported;
+        if (recovering) continue;
+        s.punches[st.label]++;
+        events.push({ type: 'punch', kind: st.label, hand: role[st.side], side: st.side, t: st.end - startT, prob: Math.round(st.prob * 100) / 100 });
+      }
+    }
+
     s.events.push(...events);
     return { tracked: true, events, guardOk, hot, mode: fullBody ? 'full' : 'upper' };
   }
@@ -138,7 +162,7 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner' } = {})
   function peek() {
     return {
       guardPct: s.tracked ? Math.round((s.guardOk / s.tracked) * 100) : null,
-      totalPunches: s.punches.jab + s.punches.cross,
+      totalPunches: s.punches.jab + s.punches.cross + s.punches.hook + s.punches.uppercut,
       totalKicks: s.kicks.lead + s.kicks.rear,
     };
   }
@@ -153,7 +177,7 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner' } = {})
       punches: { ...s.punches },
       kicks: { ...s.kicks },
       guardDrops: { ...s.guardDrops },
-      totalPunches: s.punches.jab + s.punches.cross,
+      totalPunches: s.punches.jab + s.punches.cross + s.punches.hook + s.punches.uppercut,
       totalKicks: s.kicks.lead + s.kicks.rear,
       activeMs: Math.round(s.activeMs),
       events: s.events.slice(),
