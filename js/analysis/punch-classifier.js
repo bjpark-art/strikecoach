@@ -1,7 +1,11 @@
-// 펀치 동작 분류(스트레이트 / 훅 / 어퍼컷)와 2D 타격 구간 감지.
-// 모델은 tools/punch-classifier/export.py 가 BoxingVI 데이터로 학습해 만든 그래디언트 부스팅 트리.
-// 특징 계산은 export.py 의 feats() 와 똑같아야 한다 (tests/punch-fixture.js 로 확인).
-import MODEL from './punch-model.js';
+// 펀치 동작 분류(스트레이트 / 훅 / 어퍼컷 / 펀치 아님)와 2D 타격 구간 감지.
+// 모델은 tools/validate/train_mp.py 가 BoxingVI 영상의 MediaPipe 좌표로 학습해 만든 그래디언트 부스팅 트리.
+// 특징 계산은 tools/punch-classifier/train2.py 의 feats() 와 똑같아야 한다 (tests/punch-fixture.js 로 확인).
+import DEFAULT_MODEL from './punch-model.js';
+
+let MODEL = DEFAULT_MODEL;
+/** 검증 도구에서 영상별로 다른 모델을 끼워 넣을 때만 쓴다. 인자 없이 부르면 기본 모델로 돌아간다. */
+export function setModel(m) { MODEL = m || DEFAULT_MODEL; }
 
 // COCO 17 관절 번호 → MediaPipe 33 관절 번호 (얼굴 일부는 쓰지 않음)
 const MP_OF_COCO = { 0: 0, 5: 11, 6: 12, 7: 13, 8: 14, 9: 15, 10: 16, 11: 23, 12: 24 };
@@ -106,17 +110,23 @@ export function classifyFeatures(x) {
 
 // ---------- 2D 타격 구간 감지 (훅·어퍼컷처럼 곧게 펴지지 않는 펀치용) ----------
 // 기준값은 BoxingVI 펀치들의 분포에서 정함: 최고 손목 속도 하위 10% ≈ 4.3 몸통/초, 손목 이동 하위 10% ≈ 0.22 몸통
-const SPEED_ON = 2.0;       // 이 속도(몸통 길이/초)를 넘으면 구간 시작
-const SPEED_OFF = 1.2;
-const PEAK_MIN = 4.0;
-const TRAVEL_MIN = 0.2;
+// createStrikeDetector(tune)로 덮어쓸 수 있다(검증 도구용).
+export const STRIKE_TUNE = {
+  speedOn: 2.0,    // 이 속도(몸통 길이/초)를 넘으면 구간 시작
+  speedOff: 1.2,
+  peakMin: 4.0,
+  travelMin: 0.2,
+};
 const MAX_SEG_MS = 800;
 const HISTORY = 40;
 
 /**
  * 프레임을 넣으면 손목이 빠르게 움직인 구간이 끝날 때마다 { side, start, end, label, prob, probs } 를 돌려준다.
  */
-export function createStrikeDetector() {
+export function createStrikeDetector(tune = {}) {
+  // 감지 기준값은 모델을 학습할 때 쓴 값(MODEL.detect)을 따라야 학습 때와 같은 구간이 잡힌다.
+  const { speedOn: SPEED_ON, speedOff: SPEED_OFF, peakMin: PEAK_MIN, travelMin: TRAVEL_MIN } = { ...STRIKE_TUNE, ...(MODEL.detect || {}), ...tune };
+  const keepFeatures = !!tune.keepFeatures; // 학습 데이터 만들 때만
   const hist = [];                       // { t, f: cocoFrame }
   const seg = { l: null, r: null };      // 진행 중인 구간
   const prev = { l: null, r: null };     // 직전 프레임 손목(몸통 길이 단위, 어깨 기준)
@@ -139,7 +149,9 @@ export function createStrikeDetector() {
     const pf = punchFeatures(clip);
     if (!pf) return null;
     const c = classifyFeatures(pf.features);
-    return { side, start: hist[from].t, end: hist[endIdx].t, ...c };
+    const r = { side, start: hist[from].t, end: hist[endIdx].t, ...c };
+    if (keepFeatures) { r.features = pf.features; r.peak = s.peak; r.travel = s.travel; }
+    return r;
   }
 
   function update(t, image) {

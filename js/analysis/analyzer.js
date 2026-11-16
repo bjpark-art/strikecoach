@@ -4,8 +4,15 @@ import { createStrikeDetector } from './punch-classifier.js';
 // 가드 판정 여유(몸통 길이 배수). 입문자는 너그럽게, 중급자는 엄격하게 (PRD 7절).
 const GUARD_SLACK = { beginner: 0.25, intermediate: 0.1 };
 
-const PUNCH_STRAIGHT = 0.92;   // 이 이상 펴지면 펀치로 본다
-const PUNCH_REACH = 0.85;      // 어깨~손목 거리 / 몸통 길이
+// 판정 기준값. createAnalyzer({ tune })로 일부만 덮어쓸 수 있다(검증 도구 tools/validate 에서 사용).
+export const DEFAULT_TUNE = {
+  straight: 0.92,    // 팔 펴짐 이 이상이면 스트레이트 펀치
+  reach: 0.85,       // 어깨~손목 거리 / 몸통 길이
+  coreVis: 0.5,      // 양 어깨·팔꿈치·손목 가시성이 모두 이 이상이어야 분석
+  curvedProb: 0.55,  // 훅·어퍼컷: 분류기 확률이 이 이상이어야 센다
+  guardFilter: true,   // 가드 하락 중이거나 손을 다시 올리는 순간의 타격 구간은 세지 않음
+  punchSource: 'rule', //'rule': 스트레이트는 3D 규칙, 훅·어퍼컷은 분류기 / 'classifier': 모든 펀치를 분류기로
+};
 const RETRACT_STRAIGHT = 0.8;
 const RETRACT_REACH = 0.6;
 const PUNCH_MIN_GAP_MS = 180;
@@ -14,8 +21,7 @@ const GUARD_DROP_MS = 400;     // 이만큼 계속 내려가 있어야 오류로
 const KICK_MIN_GAP_MS = 400;
 // 상체 모드: 엉덩이가 안 보이면 몸통 길이 대신 3D 어깨 너비 × 이 비율을 기준 길이로 쓴다.
 export const UPPER_TORSO_RATIO = 1.4;
-// 훅·어퍼컷: 2D 타격 구간을 분류기가 이 확률 이상으로 판정해야 센다
-export const CURVED_MIN_PROB = 0.55;
+export const CURVED_MIN_PROB = DEFAULT_TUNE.curvedProb;
 const STRAIGHT_OVERLAP_MS = 150;
 
 const CORE = [LM.lSh, LM.rSh, LM.lEl, LM.rEl, LM.lWr, LM.rWr];
@@ -30,7 +36,8 @@ export function sidesFor(stance) {
  * 프레임 단위 자세 분석기.
  * frame = { t: ms, world: 3D 랜드마크(미터, y 아래 방향), image: 정규화 랜드마크(가시성 판단용) }
  */
-export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved = true } = {}) {
+export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved = true, tune = {} } = {}) {
+  const P = { ...DEFAULT_TUNE, ...tune };
   const { lead, rear } = sidesFor(stance);
   const role = { [lead]: 'lead', [rear]: 'rear' };
   const slack = GUARD_SLACK[level] ?? 0.2;
@@ -48,9 +55,30 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
   };
   let lastT = null;
   let startT = null;
-  const strikes = curved ? createStrikeDetector() : null;
+  const strikes = curved ? createStrikeDetector(tune) : null;
   const straightTimes = { l: [], r: [] };
   const recoverTimes = { l: [], r: [] }; // 가드 하락에서 손을 다시 올린 시점 (어퍼컷으로 오인하지 않게)
+
+  // 분류기가 낸 타격 구간을 펀치로 센다.
+  // rule 모드: 훅·어퍼컷만 (스트레이트는 3D 규칙), 같은 팔 스트레이트와 겹치면 뺀다. classifier 모드: 스트레이트도 잽/크로스로 센다.
+  // 'none'(펀치 아님)과 가드 하락에서 손을 올리는 동작은 세지 않는다.
+  function handleStrikes(list, events) {
+    for (const st of list) {
+      const curved = st.label === 'hook' || st.label === 'uppercut';
+      const straight = st.label === 'straight' && P.punchSource === 'classifier';
+      if (!curved && !straight) continue;
+      if (st.prob < P.curvedProb) continue;
+      if (P.punchSource === 'rule') {
+        const overlaps = straightTimes[st.side].some((x) => x >= st.start - STRAIGHT_OVERLAP_MS && x <= st.end + STRAIGHT_OVERLAP_MS);
+        if (overlaps) continue;
+      }
+      const recovering = recoverTimes[st.side].some((x) => x >= st.start - 300 && x <= st.end + 100) || hand[st.side].reported;
+      if (recovering && P.guardFilter) continue;
+      const kind = straight ? (role[st.side] === 'lead' ? 'jab' : 'cross') : st.label;
+      s.punches[kind]++;
+      events.push({ type: 'punch', kind, hand: role[st.side], side: st.side, t: st.end - startT, prob: Math.round(st.prob * 100) / 100 });
+    }
+  }
 
   function update(frame) {
     const { t, world, image } = frame;
@@ -60,9 +88,13 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
     lastT = t;
     s.activeMs += dt;
 
+    // 2D 타격 구간은 양팔이 다 안 보이는 프레임에서도 계속 따라간다(분류기 모드에선 이때도 센다).
+    const strikeOut = strikes ? strikes.update(t, image) : [];
     const vis = image || world;
-    if (!world || !vis || !allVisible(vis, CORE)) {
-      return { tracked: false, events: [], guardOk: null, hot: null, mode: null };
+    if (!world || !vis || !allVisible(vis, CORE, P.coreVis)) {
+      const events = [];
+      if (P.punchSource === 'classifier') { handleStrikes(strikeOut, events); s.events.push(...events); }
+      return { tracked: false, events, guardOk: null, hot: null, mode: null };
     }
     s.tracked++;
 
@@ -79,14 +111,16 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
       const m = armMetrics(world, sd, T);
       const a = arm[sd];
       const atShoulderHeight = m.wrist.y < shY + 0.35 * T; // 팔을 늘어뜨린 것과 구분
-      if (!a.ext && m.straight > PUNCH_STRAIGHT && m.reach > PUNCH_REACH && atShoulderHeight && t - a.last > PUNCH_MIN_GAP_MS) {
+      if (!a.ext && m.straight > P.straight && m.reach > P.reach && atShoulderHeight && t - a.last > PUNCH_MIN_GAP_MS) {
         a.ext = true;
         a.last = t;
-        const kind = role[sd] === 'lead' ? 'jab' : 'cross';
-        s.punches[kind]++;
-        straightTimes[sd].push(t);
-        if (straightTimes[sd].length > 10) straightTimes[sd].shift();
-        events.push({ type: 'punch', kind, hand: role[sd], side: sd, t: t - startT });
+        if (P.punchSource === 'rule') {
+          const kind = role[sd] === 'lead' ? 'jab' : 'cross';
+          s.punches[kind]++;
+          straightTimes[sd].push(t);
+          if (straightTimes[sd].length > 10) straightTimes[sd].shift();
+          events.push({ type: 'punch', kind, hand: role[sd], side: sd, t: t - startT });
+        }
       } else if (a.ext && (m.straight < RETRACT_STRAIGHT || m.reach < RETRACT_REACH)) {
         a.ext = false;
         a.retract = t;
@@ -138,18 +172,7 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
       }
     }
 
-    // 훅·어퍼컷: 손목이 빠르게 움직인 2D 구간을 분류. 같은 팔의 스트레이트와 겹치면 세지 않는다.
-    if (strikes) {
-      for (const st of strikes.update(t, image)) {
-        if (st.label === 'straight' || st.prob < CURVED_MIN_PROB) continue;
-        const overlaps = straightTimes[st.side].some((x) => x >= st.start - STRAIGHT_OVERLAP_MS && x <= st.end + STRAIGHT_OVERLAP_MS);
-        if (overlaps) continue;
-        const recovering = recoverTimes[st.side].some((x) => x >= st.start - 300 && x <= st.end + 100) || hand[st.side].reported;
-        if (recovering) continue;
-        s.punches[st.label]++;
-        events.push({ type: 'punch', kind: st.label, hand: role[st.side], side: st.side, t: st.end - startT, prob: Math.round(st.prob * 100) / 100 });
-      }
-    }
+    if (P.punchSource === 'rule') handleStrikes(strikeOut, events);
 
     s.events.push(...events);
     return { tracked: true, events, guardOk, hot, mode: fullBody ? 'full' : 'upper' };
