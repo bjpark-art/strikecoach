@@ -5,21 +5,22 @@ import { scoreRounds } from './judge.js';
 
 /**
  * @param {{a: Float32Array, b: Float32Array, overlap: Uint8Array}} data
- * @param {{me: 'a'|'b', meStance?: string|null, level?: string, roundSec?: number|null, durMs: number}} opts
+ * @param {{me: 'a'|'b', meStance?: string|null, level?: string, roundSec?: number|null, durMs: number, ranges?: number[][]|null, origin?: number|null}} opts
+ * ranges: 분석한 구간(초). 있으면 구간 하나가 한 라운드. origin: 이벤트 시각 기준(앱은 0 = 영상 속 시각).
  */
-export function analyzeSparring(data, { me = 'a', meStance = null, level = 'beginner', roundSec = null, durMs }) {
+export function analyzeSparring(data, { me = 'a', meStance = null, level = 'beginner', roundSec = null, durMs, ranges = null, origin = null }) {
   const meBuf = me === 'a' ? data.a : data.b;
   const oppBuf = me === 'a' ? data.b : data.a;
   const stance = { me: meStance || inferStance(meBuf, oppBuf), opp: inferStance(oppBuf, meBuf) };
 
-  const meRes = analyzeFrames(meBuf, { stance: stance.me, level });
-  const oppRes = analyzeFrames(oppBuf, { stance: stance.opp, level });
+  const meRes = analyzeFrames(meBuf, { stance: stance.me, level, origin });
+  const oppRes = analyzeFrames(oppBuf, { stance: stance.opp, level, origin });
 
   const attacks = (evs) => evs.filter((e) => e.type === 'punch' || e.type === 'kick');
-  const hitsMe = detectHits(meBuf, oppBuf, meRes.summary.events, data.overlap).map((h) => ({ ...h, by: 'me' }));
-  const hitsOpp = detectHits(oppBuf, meBuf, oppRes.summary.events, data.overlap).map((h) => ({ ...h, by: 'opp' }));
+  const hitsMe = detectHits(meBuf, oppBuf, meRes.summary.events, data.overlap, origin).map((h) => ({ ...h, by: 'me' }));
+  const hitsOpp = detectHits(oppBuf, meBuf, oppRes.summary.events, data.overlap, origin).map((h) => ({ ...h, by: 'opp' }));
 
-  const press = pressure(meBuf, oppBuf).map((p) => ({ t: p.t, who: p.who === 'a' ? 'me' : p.who === 'b' ? 'opp' : null }));
+  const press = pressure(meBuf, oppBuf, origin).map((p) => ({ t: p.t, who: p.who === 'a' ? 'me' : p.who === 'b' ? 'opp' : null }));
 
   const n = Math.min(meRes.tracked.length, oppRes.tracked.length);
   let both = 0, ov = 0;
@@ -35,6 +36,7 @@ export function analyzeSparring(data, { me = 'a', meStance = null, level = 'begi
   const judge = scoreRounds({
     durMs,
     roundSec,
+    roundRanges: ranges?.length ? ranges.map(([a, b]) => ({ start: a * 1000, end: b * 1000 })) : null,
     hitsMe,
     hitsOpp,
     attacksMe: attacks(meRes.summary.events),

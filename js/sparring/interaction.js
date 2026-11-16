@@ -45,10 +45,11 @@ export function inferStance(selfBuf, oppBuf) {
  * 공격자의 펀치·킥 이벤트마다, 뻗은 순간 주먹(발)이 상대 머리·몸통 근처까지 갔는지 본다.
  * @returns [{ t, kind, target: 'head'|'body', guarded, unsure }]
  */
-export function detectHits(attBuf, defBuf, events, overlap = null) {
+// origin: 이벤트 시각의 기준(ms). 없으면 첫 프레임 시각(analyzeFrames 기본값과 같음).
+export function detectHits(attBuf, defBuf, events, overlap = null, origin = null) {
   const out = [];
   const n = Math.min(frameCount(attBuf), frameCount(defBuf));
-  const t0 = frameCount(attBuf) ? frameTime(attBuf, 0) : 0;
+  const t0 = origin ?? (frameCount(attBuf) ? frameTime(attBuf, 0) : 0);
   for (const e of events) {
     if (e.type !== 'punch' && e.type !== 'kick') continue;
     const idx = e.type === 'punch' ? (e.side === 'l' ? 15 : 16) : (e.side === 'l' ? 27 : 28);
@@ -88,10 +89,10 @@ export function detectHits(attBuf, defBuf, events, overlap = null) {
 }
 
 /** 1초 단위로 누가 상대 쪽으로 밀고 들어갔는지. [{ t, who: 'a'|'b'|null }] */
-export function pressure(aBuf, bBuf) {
+export function pressure(aBuf, bBuf, origin = null) {
   const n = Math.min(frameCount(aBuf), frameCount(bBuf));
   if (!n) return [];
-  const t0 = frameTime(aBuf, 0);
+  const t0 = origin ?? frameTime(aBuf, 0);
   const centerAt = (buf, i) => { const im = unpackFrame(buf, i).image; return im ? bodyCenter(im) : null; };
   const out = [];
   let i = 0;

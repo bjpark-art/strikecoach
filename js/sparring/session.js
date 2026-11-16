@@ -5,7 +5,8 @@ import { analyzeSparring } from './analyze.js';
 
 export function buildSparringSession(base, data, { me, meStance = null }) {
   const durMs = Math.round(base.videoDurationSec * 1000);
-  const r = analyzeSparring(data, { me, meStance, level: base.level, roundSec: base.roundSec, durMs });
+  // 앱의 영상 프레임은 영상 속 시각으로 저장돼 있어 origin 0(전체 분석이면 첫 프레임이 0초라 결과가 같다)
+  const r = analyzeSparring(data, { me, meStance, level: base.level, roundSec: base.roundSec, durMs, ranges: base.ranges, origin: 0 });
   const meStats = sessionStats(r.me);
   return {
     ...base,

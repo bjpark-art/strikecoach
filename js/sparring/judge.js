@@ -41,13 +41,16 @@ function sideScore(hits, attacks, pressSecs, roundSecs) {
  * @param {object} p
  * @param {number} p.durMs
  * @param {number|null} p.roundSec
+ * @param {Array|null} p.roundRanges — 있으면 roundSec 대신 이 구간들이 라운드
  * @param {Array} p.hitsMe / p.hitsOpp — detectHits 결과
  * @param {Array} p.attacksMe / p.attacksOpp — 공격 이벤트(t)
  * @param {Array} p.pressure — [{t, who: 'me'|'opp'|null}]
  * @param {{bothTrackedPct:number, overlapPct:number}} p.quality
  */
-export function scoreRounds({ durMs, roundSec = null, hitsMe, hitsOpp, attacksMe, attacksOpp, pressure, quality }) {
-  const rounds = splitRounds(durMs, roundSec).map((r, i) => {
+export function scoreRounds({ durMs, roundSec = null, roundRanges = null, hitsMe, hitsOpp, attacksMe, attacksOpp, pressure, quality }) {
+  // roundRanges: [{start, end}](ms) 분석 구간을 고른 경우 구간 하나가 한 라운드
+  const split = roundRanges?.length ? roundRanges : splitRounds(durMs, roundSec);
+  const rounds = split.map((r, i) => {
     const secs = pressure.filter((p) => inRange(p.t, r)).length || Math.max(1, Math.round((r.end - r.start) / 1000));
     const me = sideScore(hitsMe.filter((h) => inRange(h.t, r)), attacksMe.filter((a) => inRange(a.t, r)).length,
       pressure.filter((p) => p.who === 'me' && inRange(p.t, r)).length, secs);

@@ -38,13 +38,13 @@ export function mount(root, ctx) {
         <video id="pv" class="preview-video" controls muted playsinline></video>
         <div class="row"><b class="grow" id="fname"></b><span class="small muted num" id="fdur"></span></div>
         <div class="field" id="roundField">
-          <div class="small muted">라운드 길이 (라운드별로 채점해요)</div>
+          <div class="small muted" id="roundLabel">라운드 길이 (라운드별로 채점해요)</div>
           <div class="chips" data-single id="roundSec">
             ${chip('0', '영상 전체', '0')}${chip('120', '2분', '0')}${chip('180', '3분', '0')}
           </div>
         </div>
         <div class="field" id="rangeField">
-          <div class="small muted">분석할 구간 — 라운드만 골라 두면 휴식·준비운동 동작은 세지 않아요</div>
+          <div class="small muted" id="rangeHint"></div>
           <div class="chips" id="rangeList"></div>
           <div class="row">
             <button class="btn btn-ghost grow" id="markRange" type="button"></button>
@@ -90,7 +90,10 @@ export function mount(root, ctx) {
       : tip('머리부터 발끝까지 보이면 킥까지, 상체만 보이면 펀치·가드만 분석해요') + tip('화면에 한 사람만 나와야 해요');
     $('#roundField').hidden = !sparring;
     $('#stanceField').hidden = sparring;
-    $('#rangeField').hidden = sparring;
+    $('#rangeHint').textContent = sparring
+      ? '분석할 구간 — 라운드마다 구간을 하나씩 고르면 구간 하나를 한 라운드로 채점해요'
+      : '분석할 구간 — 라운드만 골라 두면 휴식·준비운동 동작은 세지 않아요';
+    syncRoundField();
     updateEta();
   }
   renderMode();
@@ -103,7 +106,13 @@ export function mount(root, ctx) {
   });
 
   // ---------- 분석 구간 ----------
-  const rangeSec = () => (sparring || !ranges.length ? duration : ranges.reduce((a, [x, y]) => a + (y - x), 0));
+  const rangeSec = () => (!ranges.length ? duration : ranges.reduce((a, [x, y]) => a + (y - x), 0));
+  // 스파링에서 구간을 고르면 구간 하나가 한 라운드라 라운드 길이 선택은 필요 없다
+  function syncRoundField() {
+    const byRanges = sparring && ranges.length > 0;
+    $('#roundSec').hidden = byRanges;
+    $('#roundLabel').textContent = byRanges ? `라운드 ${ranges.length}개 (고른 구간마다 한 라운드)` : '라운드 길이 (라운드별로 채점해요)';
+  }
   function updateEta() {
     if (!duration) return;
     const estMin = Math.max(1, Math.round(rangeSec() * FPS * (sparring ? 0.06 : 0.04) / 60));
@@ -129,6 +138,7 @@ export function mount(root, ctx) {
       ? '＋ 지금 위치에서 구간 시작'
       : `지금 위치에서 구간 끝 (${fmtTime(pendingStart)}부터)`;
     $('#cancelRange').hidden = pendingStart == null;
+    syncRoundField();
     updateEta();
   }
   $('#markRange').addEventListener('click', () => {
@@ -188,8 +198,8 @@ export function mount(root, ctx) {
     if (!file) return;
     const stance = pressedValue($('#stance'));
     const people = sparring ? 2 : 1;
-    if (!sparring && pendingStart != null) { addRange(pendingStart, duration); pendingStart = null; renderRanges(); } // 시작만 정했으면 끝까지
-    const useRanges = !sparring && ranges.length ? ranges.map((r) => [...r]) : null;
+    if (pendingStart != null) { addRange(pendingStart, duration); pendingStart = null; renderRanges(); } // 시작만 정했으면 끝까지
+    const useRanges = ranges.length ? ranges.map((r) => [...r]) : null;
     $('#rangeField').querySelectorAll('button').forEach((b) => { b.disabled = true; });
     $('#mode').hidden = true;
     controller = new AbortController();
@@ -231,7 +241,8 @@ export function mount(root, ctx) {
             fileName: file.name, fileSize: file.size,
             videoDurationSec: Math.round(res.duration * 10) / 10,
             aspect: res.aspect, fps: res.fps, frameCount: frameCount(res.a), framesSaved,
-            roundSec: rs || null,
+            roundSec: useRanges ? null : (rs || null),
+            ranges: useRanges,
           },
         };
         ctx.videoFile = file;

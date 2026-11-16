@@ -343,6 +343,18 @@ test('분석 구간: origin 0이면 이벤트 시각이 영상 속 시각', () =
   eq(run(60, null).map((e) => Math.round(e.t)), base.map((e) => Math.round(e.t)), '기준 없으면 첫 프레임 기준(실시간 훈련)');
 });
 
+test('스파링 구간: 고른 구간 하나가 한 라운드', () => {
+  const hit = (t) => ({ t, kind: 'jab', target: 'head', guarded: false });
+  const r = scoreRounds({
+    durMs: 600000, roundSec: 180,
+    roundRanges: [{ start: 10000, end: 130000 }, { start: 200000, end: 320000 }],
+    hitsMe: [hit(20000), hit(30000), hit(150000)], hitsOpp: [hit(250000), hit(260000)],
+    attacksMe: [], attacksOpp: [], pressure: [], quality: { bothTrackedPct: 90, overlapPct: 0 },
+  });
+  eq(r.rounds.map((x) => [x.start, x.end]), [[10000, 130000], [200000, 320000]], '라운드 = 고른 구간 (roundSec 무시)');
+  eq(r.rounds.map((x) => x.winner), ['me', 'opp'], '구간 밖(150초) 유효타는 어느 라운드에도 안 들어감');
+});
+
 const failed = results.filter((r) => !r[1]);
 document.getElementById('list').innerHTML = results.map(([n, pass, msg]) =>
   `<li class="${pass ? 'pass' : 'fail'}">${pass ? '✓' : '✗'} ${n}${msg ? `<pre>${msg}</pre>` : ''}</li>`).join('');
