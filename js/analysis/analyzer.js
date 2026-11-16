@@ -12,6 +12,10 @@ export const DEFAULT_TUNE = {
                      // (0.5 → 0.3: 옆모습에서 가려진 먼 팔 때문에 프레임을 버리던 문제. 실제 영상 검증, PROGRESS.md 참고)
   curvedProb: 0.55,  // 훅·어퍼컷: 분류기 확률이 이 이상이어야 센다
   guardFilter: true,   // 가드 하락 중이거나 손을 다시 올리는 순간의 타격 구간은 세지 않음
+  // 킥: 발목이 반대쪽 무릎보다 올라간 뒤, 다리를 펴거나(엉덩이~발목 / 다리 길이) 발목을 엉덩이 근처까지 올려야 센다.
+  // 달리기처럼 무릎을 굽힌 채 뒤꿈치만 올라가는 동작을 빼기 위함(실제 영상: 달리기는 펴짐 ≤ 0.80, 발목 높이 ≤ -0.46).
+  kickExt: 0.85,
+  kickAnkle: -0.35,  // (엉덩이 y - 발목 y) / 몸통 길이. 0이면 엉덩이 높이
   punchSource: 'rule', //'rule': 스트레이트는 3D 규칙, 훅·어퍼컷은 분류기 / 'classifier': 모든 펀치를 분류기로
 };
 const RETRACT_STRAIGHT = 0.8;
@@ -164,11 +168,21 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
         const g = leg[sd];
         if (!g.up && ankle.y < standingKnee.y && t - g.last > KICK_MIN_GAP_MS) {
           g.up = true;
+          g.counted = false;
           g.last = t;
-          s.kicks[role[sd]]++;
-          events.push({ type: 'kick', leg: role[sd], side: sd, t: t - startT });
         } else if (g.up && ankle.y > standingKnee.y + 0.1 * T) {
           g.up = false;
+        }
+        if (g.up && !g.counted) {
+          const hip = world[LM[sd + 'Hip']], knee = world[LM[sd + 'Kn']];
+          const seg = dist(hip, knee) + dist(knee, ankle);
+          const ext = seg ? dist(hip, ankle) / seg : 0;
+          const ankleH = (hip.y - ankle.y) / T;
+          if (ext >= P.kickExt || ankleH >= P.kickAnkle) {
+            g.counted = true;
+            s.kicks[role[sd]]++;
+            events.push({ type: 'kick', leg: role[sd], side: sd, t: t - startT });
+          }
         }
       }
     }
