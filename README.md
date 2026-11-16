@@ -50,7 +50,7 @@ python -m http.server 5173 --bind 127.0.0.1 --directory app
 ## 훅·어퍼컷 (펀치 종류 분류기)
 
 - `js/analysis/punch-classifier.js`: 손목이 빠르게 움직인 2D 구간을 잡아 스트레이트/훅/어퍼컷으로 분류. 확률 0.55 미만, 같은 팔 스트레이트와 겹침, 가드 하락에서 손을 올리는 동작은 세지 않는다.
-- `js/analysis/punch-model.js`: 자동 생성된 그래디언트 부스팅 트리(BoxingVI 공개 데이터로 학습, 영상 하나 빼고 검증 71.9%). 생성 스크립트는 저장소 밖 `tools/punch-classifier/export.py`.
+- `js/analysis/punch-model.js`: 자동 생성된 그래디언트 부스팅 트리(BoxingVI 공개 데이터로 학습, 영상 하나 빼고 검증 71.9%. 실험 최고치 72.3% 모델을 앱용으로 줄인 버전: 트리 300개 → 120개). 생성 스크립트는 저장소 밖 `tools/punch-classifier/export.py`.
 - BoxingVI 데이터는 라이선스가 명시돼 있지 않다. 출시 전 저자 허락이 필요하다.
 - 판정 보정 데이터 내보내기는 개발자용: `localStorage.setItem('strikecoach.dev', '1')`
 
