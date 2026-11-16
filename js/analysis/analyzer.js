@@ -8,7 +8,8 @@ const GUARD_SLACK = { beginner: 0.25, intermediate: 0.1 };
 export const DEFAULT_TUNE = {
   straight: 0.92,    // 팔 펴짐 이 이상이면 스트레이트 펀치
   reach: 0.85,       // 어깨~손목 거리 / 몸통 길이
-  coreVis: 0.5,      // 양 어깨·팔꿈치·손목 가시성이 모두 이 이상이어야 분석
+  coreVis: 0.3,      // 양 어깨·팔꿈치·손목 가시성이 모두 이 이상이어야 분석
+                     // (0.5 → 0.3: 옆모습에서 가려진 먼 팔 때문에 프레임을 버리던 문제. 실제 영상 검증, PROGRESS.md 참고)
   curvedProb: 0.55,  // 훅·어퍼컷: 분류기 확률이 이 이상이어야 센다
   guardFilter: true,   // 가드 하락 중이거나 손을 다시 올리는 순간의 타격 구간은 세지 않음
   punchSource: 'rule', //'rule': 스트레이트는 3D 규칙, 훅·어퍼컷은 분류기 / 'classifier': 모든 펀치를 분류기로
