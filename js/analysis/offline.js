@@ -28,6 +28,7 @@ export function sessionStats(summary) {
   return {
     guardPct: summary.guardPct,
     trackedPct: summary.trackedPct,
+    upperPct: summary.upperPct,
     punches: summary.punches,
     kicks: summary.kicks,
     guardDrops: summary.guardDrops,

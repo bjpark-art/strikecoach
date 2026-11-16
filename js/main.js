@@ -6,8 +6,10 @@ import * as live from './screens/live.js';
 import * as report from './screens/report.js';
 import * as upload from './screens/upload.js';
 import * as review from './screens/review.js';
+import * as pick from './screens/pick.js';
+import * as sparReport from './screens/spar-report.js';
 
-const routes = { onboarding, home, setup, live, report, upload, review };
+const routes = { onboarding, home, setup, live, report, upload, review, pick, 'spar-report': sparReport };
 const root = document.getElementById('app');
 
 // 화면 사이에 넘기는 상태. 카메라 소스는 촬영 준비 → 실시간 훈련까지 이어서 쓴다.

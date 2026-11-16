@@ -1,6 +1,7 @@
 // 업로드한 영상을 프레임 단위로 넘기며(seek) 자세를 추출한다. 영상은 기기 밖으로 나가지 않는다.
-import { getLandmarker, detect, nextTimestampBase } from './landmarker.js';
+import { getLandmarker, detectAll, nextTimestampBase } from './landmarker.js';
 import { createPacker } from './frames.js';
+import { createTracker } from '../sparring/tracker.js';
 
 export class VideoError extends Error {}
 
@@ -43,15 +44,17 @@ export async function loadVideo(file) {
 }
 
 /**
- * @returns {{frames: Float32Array, fps: number, duration: number, aspect: number}}
+ * people: 1이면 { frames }, 2면 { a, b, overlap } (두 사람을 추적해 따로 저장).
  */
-export async function analyzeVideo(file, { fps = 20, onProgress, signal } = {}) {
+export async function analyzeVideo(file, { fps = 20, people = 1, onProgress, signal } = {}) {
   const { video, url, duration, aspect } = await loadVideo(file);
   try {
-    const landmarker = await getLandmarker();
+    const landmarker = await getLandmarker({ numPoses: people });
     const n = Math.floor(duration * fps) + 1;
-    const packer = createPacker(n);
-    const base = nextTimestampBase();
+    const pa = createPacker(n), pb = people === 2 ? createPacker(n) : null;
+    const overlap = people === 2 ? new Uint8Array(n) : null;
+    const tracker = people === 2 ? createTracker() : null;
+    const base = nextTimestampBase(landmarker);
     for (let i = 0; i < n; i++) {
       if (signal?.aborted) throw new DOMException('분석을 취소했어요', 'AbortError');
       const t = Math.min(i / fps, Math.max(0, duration - 0.001));
@@ -59,13 +62,21 @@ export async function analyzeVideo(file, { fps = 20, onProgress, signal } = {}) 
         video.currentTime = t;
         await once(video, 'seeked', 2000);
       }
-      const f = detect(landmarker, video, base + t * 1000);
-      packer.push({ t: t * 1000, image: f.image, world: f.world });
+      const dets = detectAll(landmarker, video, base + t * 1000);
+      if (people === 2) {
+        const r = tracker.assign(dets);
+        pa.push({ t: t * 1000, image: r.a?.image, world: r.a?.world });
+        pb.push({ t: t * 1000, image: r.b?.image, world: r.b?.world });
+        overlap[i] = r.overlap;
+      } else {
+        pa.push({ t: t * 1000, image: dets[0]?.image, world: dets[0]?.world });
+      }
       if (i % 5 === 0) onProgress?.(i / n);
       if (i % 15 === 0) await new Promise((r) => setTimeout(r, 0)); // 화면 갱신 틈
     }
     onProgress?.(1);
-    return { frames: packer.finish(), fps, duration, aspect };
+    const common = { fps, duration, aspect };
+    return people === 2 ? { ...common, a: pa.finish(), b: pb.finish(), overlap } : { ...common, frames: pa.finish() };
   } finally {
     video.removeAttribute('src');
     video.load();

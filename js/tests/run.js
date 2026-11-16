@@ -4,6 +4,11 @@ import { demoFrameAt, DEMO_LOOP_SEC } from '../pose/demo-source.js';
 import { framingStatus } from '../ui/skeleton.js';
 import { createPacker, unpackFrame, frameCount, findFrame, PACK_JOINTS } from '../pose/frames.js';
 import { analyzeFrames, guardDropIntervals } from '../analysis/offline.js';
+import { demoSparringFrameAt } from '../pose/demo-source.js';
+import { createTracker, swapFrom } from '../sparring/tracker.js';
+import { inferStance, detectHits, pressure } from '../sparring/interaction.js';
+import { scoreRounds, splitRounds } from '../sparring/judge.js';
+import { analyzeSparring } from '../sparring/analyze.js';
 
 const results = [];
 function test(name, fn) {
@@ -112,7 +117,9 @@ test('촬영 프레이밍: 데모 자세는 전신이 보임, 발이 잘리면 �
   ok(framingStatus(f.image).ok, '전신 보임이어야 함');
   f.image[27].y = 1.1;
   const st = framingStatus(f.image);
-  ok(!st.ok && st.msg.includes('뒤로'), '뒤로 가라는 안내여야 함');
+  ok(st.ok && st.level === 'upper', '발이 잘려도 상체가 보이면 상체 모드');
+  f.image[15].x = 1.2;
+  ok(!framingStatus(f.image).ok, '팔까지 잘리면 안내');
 });
 
 test('프레임 저장 형식: 저장했다 꺼낸 값이 원래 좌표와 같음', () => {
@@ -161,6 +168,124 @@ test('영상 시점으로 프레임 찾기', () => {
   [0, 50, 100, 150].forEach((t) => p.push({ t, image: null, world: null }));
   const buf = p.finish();
   eq([findFrame(buf, 0), findFrame(buf, 49), findFrame(buf, 50), findFrame(buf, 999)], [0, 0, 1, 3], '프레임 번호');
+});
+
+// ---------- 상체 모드 ----------
+const hideLower = (f) => { [23, 24, 25, 26, 27, 28].forEach((i) => { f.image[i] = { ...f.image[i], visibility: 0.05 }; }); return f; };
+
+test('상체 모드: 엉덩이·다리가 안 보여도 펀치와 가드는 판정', () => {
+  const an = createAnalyzer();
+  let mode = null;
+  for (let i = 0; i <= (DEMO_LOOP_SEC - 0.05) * 30; i++) mode = an.update(hideLower(demoFrameAt(i / 30))).mode;
+  const s = an.summary();
+  eq(mode, 'upper', '모드');
+  eq(s.punches, { jab: 4, cross: 3 }, '펀치');
+  eq(s.guardDrops, { lead: 0, rear: 1 }, '가드 하락');
+  eq(s.totalKicks, 0, '킥은 세지 않음');
+  eq(s.upperPct, 100, '상체 모드 비율');
+  eq(s.trackedPct, 100, '인식률');
+});
+
+// ---------- 스파링 ----------
+function sparBuffers(sec, opts = {}, fps = 20, shuffle = false) {
+  const pa = createPacker(10), pb = createPacker(10), tr = createTracker();
+  const n = Math.round(sec * fps);
+  const overlap = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const f = demoSparringFrameAt(i / fps, opts);
+    const dets = shuffle && i % 2 ? [f.b, f.a] : [f.a, f.b];
+    const r = tr.assign(dets);
+    pa.push({ t: f.t, ...(r.a || {}) });
+    pb.push({ t: f.t, ...(r.b || {}) });
+    overlap[i] = r.overlap;
+  }
+  return { a: pa.finish(), b: pb.finish(), overlap };
+}
+
+test('추적기: 감지 순서가 매번 바뀌어도 A는 왼쪽 사람으로 유지', () => {
+  const d = sparBuffers(3, {}, 20, true);
+  for (let i = 0; i < frameCount(d.a); i++) {
+    const a = unpackFrame(d.a, i).image, b = unpackFrame(d.b, i).image;
+    ok(a[11].x < 0.5 && b[11].x > 0.5, `프레임 ${i}에서 A/B가 뒤바뀜`);
+  }
+  eq(Array.from(d.overlap).some(Boolean), false, '겹침 없음');
+});
+
+test('추적기: 한 명이 잠깐 안 보여도 같은 자리로 복귀', () => {
+  const tr = createTracker();
+  const f0 = demoSparringFrameAt(0);
+  tr.assign([f0.a, f0.b]);
+  const r1 = tr.assign([f0.b]);          // A가 가려짐
+  ok(!r1.a && r1.b, '보이는 사람은 B로');
+  const r2 = tr.assign([f0.b, f0.a]);
+  ok(r2.a === f0.a && r2.b === f0.b, 'A/B 복귀');
+});
+
+test('두 사람 바꾸기: 지정한 프레임부터만 바뀜', () => {
+  const d = sparBuffers(1);
+  const before = unpackFrame(d.a, 0).image[11].x;
+  swapFrom(d.a, d.b, 10);
+  eq(unpackFrame(d.a, 0).image[11].x, before, '앞부분 그대로');
+  ok(unpackFrame(d.a, 10).image[11].x > 0.5, '10번째부터 오른쪽 사람');
+});
+
+test('스탠스 자동 추정: 상대에게 가까운 손 = 앞손', () => {
+  const d = sparBuffers(DEMO_LOOP_SEC);
+  eq(inferStance(d.a, d.b), 'orthodox', 'A');
+  eq(inferStance(d.b, d.a), 'orthodox', 'B');
+});
+
+test('유효타 후보: 가까우면 A의 잽이 B 머리 근처로 잡히고, 멀면 없음', () => {
+  const near = sparBuffers(DEMO_LOOP_SEC - 0.05);
+  const evs = analyzeFrames(near.a, { stance: 'orthodox' }).summary.events;
+  const hits = detectHits(near.a, near.b, evs, near.overlap);
+  ok(hits.some((h) => h.kind === 'jab' && h.target === 'head'), `잽 머리 후보 (실제 ${JSON.stringify(hits)})`);
+  ok(hits.every((h) => !h.unsure), '겹침 없음');
+  const far = sparBuffers(DEMO_LOOP_SEC - 0.05, { gap: 0.6 });
+  const farEvs = analyzeFrames(far.a, { stance: 'orthodox' }).summary.events;
+  eq(detectHits(far.a, far.b, farEvs, far.overlap).length, 0, '멀면 후보 없음');
+});
+
+test('압박: 제자리면 아무도 전진하지 않음', () => {
+  const d = sparBuffers(4);
+  const p = pressure(d.a, d.b);
+  eq(p.length, 4, '초 단위 구간');
+  ok(p.every((x) => x.who === null), '전진 없음');
+});
+
+test('라운드 나누기: 짧은 자투리는 앞 라운드에 붙임', () => {
+  eq(splitRounds(380000, 180).map((r) => [r.start, r.end]), [[0, 180000], [180000, 380000]], '20초 자투리는 붙임');
+  eq(splitRounds(400000, 180).length, 3, '40초는 따로 라운드');
+  eq(splitRounds(90000, null).length, 1, '영상 전체 한 라운드');
+});
+
+test('판정: 유효타가 많은 쪽이 우세, 신뢰도 낮으면 보류', () => {
+  const base = {
+    durMs: 360000, roundSec: 180,
+    hitsMe: [{ t: 1000, kind: 'jab', target: 'head', guarded: false }, { t: 2000, kind: 'kick', target: 'body', guarded: false }, { t: 200000, kind: 'cross', target: 'head', guarded: false }],
+    hitsOpp: [{ t: 190000, kind: 'kick', target: 'head', guarded: false }, { t: 191000, kind: 'kick', target: 'head', guarded: false }],
+    attacksMe: [], attacksOpp: [], pressure: [],
+    quality: { bothTrackedPct: 95, overlapPct: 5 },
+  };
+  const r = scoreRounds(base);
+  eq(r.rounds.map((x) => x.winner), ['me', 'opp'], '라운드 승자');
+  eq(r.total, { me: 19, opp: 19 }, '합계');
+  eq(r.verdict, 'draw', '박빙');
+  eq(r.confidence, 'high', '신뢰도');
+  const low = scoreRounds({ ...base, hitsOpp: [], quality: { bothTrackedPct: 40, overlapPct: 50 } });
+  eq([low.verdict, low.leaning], ['hold', 'me'], '판정 보류지만 기울기는 나');
+  const guarded = scoreRounds({ ...base, roundSec: null, hitsMe: [{ t: 1, kind: 'jab', target: 'head', guarded: true }], hitsOpp: [] });
+  eq(guarded.rounds[0].me.score, 1, '가드에 막혔을 수 있는 후보는 절반');
+});
+
+test('스파링 분석 전체: 데모 영상에서 판정과 신뢰도가 나옴', () => {
+  const d = sparBuffers(DEMO_LOOP_SEC * 2);
+  const r = analyzeSparring(d, { me: 'a', durMs: DEMO_LOOP_SEC * 2000 });
+  eq(r.stance, { me: 'orthodox', opp: 'orthodox' }, '스탠스');
+  eq(r.quality, { bothTrackedPct: 100, overlapPct: 0 }, '품질');
+  eq(r.judge.confidence, 'high', '신뢰도');
+  ok(['me', 'opp', 'draw'].includes(r.judge.verdict), '판정');
+  ok(r.hits.some((h) => h.by === 'me') && r.hits.some((h) => h.by === 'opp'), '양쪽 유효타 후보');
 });
 
 const failed = results.filter((r) => !r[1]);

@@ -23,6 +23,7 @@ function topErrors(s) {
 export function mount(root, ctx) {
   const s = (ctx.reportId && getSession(ctx.reportId)) || listSessions()[0];
   if (!s) { ctx.go('home'); return; }
+  if (s.source === 'sparring') { ctx.reportId = s.id; ctx.go('spar-report'); return; }
 
   const d = new Date(s.date);
   const dateLabel = `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -79,6 +80,7 @@ export function mount(root, ctx) {
           ${tech.map(([n, v, k]) => `<div class="bar"><span>${n}</span><div class="track"><div class="fill ${k ? 'kick' : ''}" style="width:${v / max * 100}%"></div></div><span class="num" style="text-align:right">${v}</span></div>`).join('')}
         </div>
         <div class="notice" style="margin-top:12px">지금 버전은 곧게 뻗는 펀치(잽·크로스)와 킥만 셉니다. 훅·어퍼컷 구분은 다음 버전에서 추가돼요.</div>
+        ${s.upperPct > 30 ? `<div class="notice" style="margin-top:8px">${s.upperPct}% 구간은 상체만 보여서 킥을 세지 않았고, 펀치·가드도 전신일 때보다 덜 정확할 수 있어요.</div>` : ''}
         ${s.actual && Object.values(s.actual).some((v) => v != null) ? `
           <div class="small muted" style="margin-top:12px">실제 횟수와 비교</div>
           <div class="cmp-table">

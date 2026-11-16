@@ -9,6 +9,8 @@
   --accent: #EE4B3B;
   --accent-ink: #C7321F;
   --accent-soft: #FDE9E6;
+  --opp: #2F6FD6;          /* 스파링 상대 */
+  --opp-soft: #E5EEFB;
   --good: #158A47;
   --good-soft: #E2F4E9;
   --warn: #B86A00;
@@ -193,6 +195,48 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .calib summary { cursor: pointer; }
 .calib-grid { display: grid; grid-template-columns: 1fr 110px; gap: 8px; align-items: center; }
 .cmp-table { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 14px; font-size: 13px; margin-top: 4px; }
+
+/* 스파링 */
+.seg-wide { display: grid; grid-template-columns: 1fr 1fr; }
+.seg-wide button { padding: 9px; font-size: 14px; }
+.verdict { display: grid; gap: 6px; text-align: center; }
+.verdict .row { text-align: left; }
+.verdict-title { font-size: 30px; font-weight: 800; letter-spacing: -0.03em; }
+.verdict.win .verdict-title { color: var(--accent-ink); }
+.verdict.lose .verdict-title { color: var(--opp); }
+.verdict.hold .verdict-title, .verdict.draw .verdict-title { color: var(--ink); }
+.verdict-score { font-size: 26px; font-weight: 700; display: flex; justify-content: center; gap: 10px; }
+.verdict-score .me, .rounds .me { color: var(--accent-ink); }
+.verdict-score .opp, .rounds .opp { color: var(--opp); }
+.rounds { display: grid; grid-template-columns: 1.4fr 0.8fr 0.8fr 1.2fr; gap: 8px 10px; margin-top: 10px; align-items: baseline; font-size: 14px; }
+.rounds .h { font-size: 12px; color: var(--muted); font-weight: 700; }
+.rounds .h.me, .rounds .h.opp { font-weight: 800; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin: 0 3px 0 8px; vertical-align: middle; }
+.dot.me { background: var(--accent); } .dot.opp { background: var(--opp); }
+.vs { display: grid; gap: 10px; margin-top: 10px; }
+.vs-row { display: grid; grid-template-columns: 1fr 44px 1.2fr 44px; gap: 8px; align-items: center; }
+.vs-label { color: var(--muted); }
+.vs-num { font-weight: 700; font-size: 14px; }
+.vs-num.me { text-align: right; color: var(--accent-ink); }
+.vs-num.opp { color: var(--opp); }
+.vs-bars { display: grid; gap: 3px; }
+.vs-bar { height: 7px; border-radius: 4px; min-width: 2px; }
+.vs-bar.me { background: var(--accent); } .vs-bar.opp { background: var(--opp); }
+.moments { display: grid; gap: 2px; margin-top: 8px; }
+.moment { display: flex; align-items: center; gap: 10px; text-align: left; border: 0; background: none; padding: 8px 4px; border-radius: 10px; font-size: 14px; }
+.moment:hover { background: var(--surface-2); }
+.mdot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.mdot.good { background: var(--good); } .mdot.bad { background: var(--opp); } .mdot.warn { background: var(--warn); }
+.pick-zone { position: absolute; top: 0; bottom: 0; width: 50%; border: 3px solid transparent; background: none; border-radius: 16px; }
+.pick-zone.left { left: 0; } .pick-zone.right { right: 0; }
+.pick-zone:hover, .pick-zone:focus-visible { border-color: var(--surface); background: rgba(255,255,255,.08); }
+.pick-zone span { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 800; }
+.mk.hit-me { background: var(--good); }
+.mk.hit-opp { background: var(--opp); }
+.mk.low { background: var(--surface); color: var(--muted); border: 2px dashed var(--muted); }
+.lane-label { font-size: 11px; margin-top: 4px; }
+.lane.opp i.punch { background: var(--opp); }
+.sw-hitme { background: var(--good); } .sw-hitopp { background: var(--opp); }
 
 @media (min-width: 520px) {
   .app { margin-block: 24px; border-radius: 28px; overflow: hidden; box-shadow: 0 30px 60px -30px rgba(16,18,22,.35); min-height: calc(100% - 48px); }

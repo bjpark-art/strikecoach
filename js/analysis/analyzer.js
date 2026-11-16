@@ -1,4 +1,4 @@
-import { LM, allVisible, torso, armMetrics } from './geometry.js';
+import { LM, allVisible, torso, armMetrics, dist } from './geometry.js';
 
 // 가드 판정 여유(몸통 길이 배수). 입문자는 너그럽게, 중급자는 엄격하게 (PRD 7절).
 const GUARD_SLACK = { beginner: 0.25, intermediate: 0.1 };
@@ -11,8 +11,11 @@ const PUNCH_MIN_GAP_MS = 180;
 const RETURN_GRACE_MS = 350;   // 펀치를 회수하는 동안은 가드 하락으로 보지 않음
 const GUARD_DROP_MS = 400;     // 이만큼 계속 내려가 있어야 오류로 기록
 const KICK_MIN_GAP_MS = 400;
+// 상체 모드: 엉덩이가 안 보이면 몸통 길이 대신 3D 어깨 너비 × 이 비율을 기준 길이로 쓴다.
+export const UPPER_TORSO_RATIO = 1.4;
 
-const CORE = [LM.lSh, LM.rSh, LM.lEl, LM.rEl, LM.lWr, LM.rWr, LM.lHip, LM.rHip];
+const CORE = [LM.lSh, LM.rSh, LM.lEl, LM.rEl, LM.lWr, LM.rWr];
+const HIPS = [LM.lHip, LM.rHip];
 const LEGS = [LM.lKn, LM.rKn, LM.lAn, LM.rAn];
 
 export function sidesFor(stance) {
@@ -33,7 +36,7 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner' } = {})
   const leg = { l: { up: false, last: -1e9 }, r: { up: false, last: -1e9 } };
 
   const s = {
-    frames: 0, tracked: 0, guardOk: 0, activeMs: 0,
+    frames: 0, tracked: 0, upper: 0, guardOk: 0, activeMs: 0,
     punches: { jab: 0, cross: 0 },
     kicks: { lead: 0, rear: 0 },
     guardDrops: { lead: 0, rear: 0 },
@@ -52,11 +55,13 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner' } = {})
 
     const vis = image || world;
     if (!world || !vis || !allVisible(vis, CORE)) {
-      return { tracked: false, events: [], guardOk: null, hot: null };
+      return { tracked: false, events: [], guardOk: null, hot: null, mode: null };
     }
     s.tracked++;
 
-    const T = torso(world) || 0.5;
+    const fullBody = allVisible(vis, HIPS);
+    if (!fullBody) s.upper++;
+    const T = (fullBody ? torso(world) : dist(world[LM.lSh], world[LM.rSh]) * UPPER_TORSO_RATIO) || 0.5;
     const events = [];
     const shY = (world[LM.lSh].y + world[LM.rSh].y) / 2;
     const guardLine = shY + slack * T; // y는 아래로 증가: 손목 y가 이보다 작으면 가드가 올라간 상태
@@ -72,7 +77,7 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner' } = {})
         a.last = t;
         const kind = role[sd] === 'lead' ? 'jab' : 'cross';
         s.punches[kind]++;
-        events.push({ type: 'punch', kind, hand: role[sd], t: t - startT });
+        events.push({ type: 'punch', kind, hand: role[sd], side: sd, t: t - startT });
       } else if (a.ext && (m.straight < RETRACT_STRAIGHT || m.reach < RETRACT_REACH)) {
         a.ext = false;
         a.retract = t;
@@ -115,7 +120,7 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner' } = {})
           g.up = true;
           g.last = t;
           s.kicks[role[sd]]++;
-          events.push({ type: 'kick', leg: role[sd], t: t - startT });
+          events.push({ type: 'kick', leg: role[sd], side: sd, t: t - startT });
         } else if (g.up && ankle.y > standingKnee.y + 0.1 * T) {
           g.up = false;
         }
@@ -123,7 +128,7 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner' } = {})
     }
 
     s.events.push(...events);
-    return { tracked: true, events, guardOk, hot };
+    return { tracked: true, events, guardOk, hot, mode: fullBody ? 'full' : 'upper' };
   }
 
   // 일시정지·휴식 뒤 재개할 때 시간 간격을 활동 시간에 넣지 않도록.
@@ -143,6 +148,7 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner' } = {})
       frames: s.frames,
       trackedFrames: s.tracked,
       trackedPct: s.frames ? Math.round((s.tracked / s.frames) * 100) : 0,
+      upperPct: s.tracked ? Math.round((s.upper / s.tracked) * 100) : 0,
       guardPct: s.tracked ? Math.round((s.guardOk / s.tracked) * 100) : null,
       punches: { ...s.punches },
       kicks: { ...s.kicks },

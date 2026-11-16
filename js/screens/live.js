@@ -5,6 +5,7 @@ import { drawSkeleton } from '../ui/skeleton.js';
 import { icon, fmtTime } from '../ui/icons.js';
 
 const COUNTDOWN_SEC = 3;
+const now0 = () => performance.now();
 const MIN_SAVE_MS = 5000;
 
 export function mount(root, ctx) {
@@ -22,6 +23,7 @@ export function mount(root, ctx) {
   let lostSince = null;
   let frames = 0, fpsT = performance.now(), fps = 0;
   let stopArmed = 0;
+  let upperFrames = 0, modeFrames = 0, modeT = performance.now(), upperMode = false;
   let wakeLock = null;
 
   root.innerHTML = `
@@ -101,7 +103,9 @@ export function mount(root, ctx) {
   function renderHeader() {
     $('#timer').textContent = fmtTime(Math.ceil(remaining));
     if (phase === 'countdown') $('#count').textContent = Math.max(1, Math.ceil(remaining));
-    $('#round').textContent = phase === 'rest' ? `휴식 · 다음은 ${round + 1}라운드` : `라운드 ${round} / ${s.rounds}`;
+    if (now0() - modeT > 2000) { upperMode = modeFrames > 10 && upperFrames / modeFrames > 0.5; upperFrames = 0; modeFrames = 0; modeT = now0(); }
+    const upper = upperMode;
+    $('#round').textContent = (phase === 'rest' ? `휴식 · 다음은 ${round + 1}라운드` : `라운드 ${round} / ${s.rounds}`) + (upper ? ' · 상체 모드 (킥 제외)' : '');
     const rec = $('#rec');
     rec.className = 'rec' + (paused ? ' paused' : phase === 'rest' ? ' rest' : '');
     rec.querySelector('span').textContent = paused ? '일시정지됨' : phase === 'rest' ? '휴식 중' : phase === 'work' ? '분석 중' : '준비';
@@ -135,6 +139,8 @@ export function mount(root, ctx) {
         if (f.t - lostSince > 2000) { const c = cues.onLost(f.t); if (c) showCue(c); }
       } else {
         lostSince = null;
+        modeFrames++;
+        if (r.mode === 'upper') upperFrames++;
         const c = cues.onEvents(r.events, f.t);
         if (c) showCue(c);
         hot = r.hot;
@@ -182,6 +188,7 @@ export function mount(root, ctx) {
       durationSec: Math.round(sum.activeMs / 1000),
       guardPct: sum.guardPct,
       trackedPct: sum.trackedPct,
+      upperPct: sum.upperPct,
       punches: sum.punches,
       kicks: sum.kicks,
       guardDrops: sum.guardDrops,

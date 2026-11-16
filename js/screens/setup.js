@@ -90,8 +90,9 @@ export function mount(root, ctx) {
         st = { ok: false, msg: '화면에 내가 안 보이면 웹캠 덮개·카메라 차단 키를 확인하세요' };
       }
       if (st.ok) framingOkSince ??= f.t; else framingOkSince = null;
-      $('#guide').classList.toggle('bad', !st.ok);
-      $('#msg').innerHTML = `${icon(st.ok ? 'check' : 'alert', `width:16px;height:16px;color:${st.ok ? 'var(--good)' : 'var(--warn)'}`)}${st.msg}`;
+      const good = st.ok && st.level !== 'upper';
+      $('#guide').classList.toggle('bad', !good);
+      $('#msg').innerHTML = `${icon(good ? 'check' : 'alert', `width:16px;height:16px;color:${good ? 'var(--good)' : 'var(--warn)'}`)}${st.msg}`;
     });
   }
 

@@ -15,15 +15,18 @@ export function mount(root, ctx) {
   let previewUrl = null;
   let controller = null;
   let wakeLock = null;
+  let sparring = ctx.uploadMode === 'sparring';
+  ctx.uploadMode = null;
 
   root.innerHTML = `
   <section class="screen">
     <div class="head"><button class="icon-btn" data-back aria-label="뒤로">${icon('back')}</button><h1>영상 분석</h1></div>
     <div class="body">
-      <div class="card stack">
-        <b>혼자 나오는 훈련 영상을 분석해요</b>
-        <div class="small muted">미트 훈련이나 섀도 영상을 올리면 잽·크로스·킥 횟수와 가드가 내려간 순간을 찾아줘요. 영상은 이 기기 안에서만 분석하고 어디에도 올리지 않아요.</div>
+      <div class="seg seg-wide" id="mode">
+        <button data-m="solo" aria-pressed="${!sparring}">혼자 훈련</button>
+        <button data-m="sparring" aria-pressed="${sparring}">스파링 (2인)</button>
       </div>
+      <div class="card stack" id="intro"></div>
 
       <label class="btn btn-ghost" for="file" id="pickBtn">${icon('upload')}<span>영상 선택</span></label>
       <input type="file" id="file" accept="video/*" hidden>
@@ -31,7 +34,13 @@ export function mount(root, ctx) {
       <div class="card stack" id="preview" hidden>
         <video id="pv" class="preview-video" controls muted playsinline></video>
         <div class="row"><b class="grow" id="fname"></b><span class="small muted num" id="fdur"></span></div>
-        <div class="field">
+        <div class="field" id="roundField">
+          <div class="small muted">라운드 길이 (라운드별로 채점해요)</div>
+          <div class="chips" data-single id="roundSec">
+            ${chip('0', '영상 전체', '0')}${chip('120', '2분', '0')}${chip('180', '3분', '0')}
+          </div>
+        </div>
+        <div class="field" id="stanceField">
           <div class="small muted">영상 속 내 스탠스</div>
           <div class="chips" data-single id="stance">
             ${chip('orthodox', '오소독스 (왼발 앞)', s.stance)}${chip('southpaw', '사우스포 (오른발 앞)', s.stance)}
@@ -39,10 +48,7 @@ export function mount(root, ctx) {
         </div>
       </div>
 
-      <div class="stack small muted" id="tips">
-        <div class="row">${icon('check', 'color:var(--good)')}<span class="grow">머리부터 발끝까지 계속 보이는 영상이 정확해요</span></div>
-        <div class="row">${icon('check', 'color:var(--good)')}<span class="grow">화면에 한 사람만 나와야 해요 (2인 스파링은 다음 단계)</span></div>
-      </div>
+      <div class="stack small muted" id="tips"></div>
 
       <div class="card stack" id="progress" hidden>
         <div class="row"><b class="grow">분석 중</b><span class="num" id="pct">0%</span></div>
@@ -60,6 +66,28 @@ export function mount(root, ctx) {
   const $ = (q) => root.querySelector(q);
   bindChips(root);
   $('[data-back]').addEventListener('click', () => ctx.go('home'));
+
+  const tip = (t) => `<div class="row">${icon('check', 'color:var(--good)')}<span class="grow">${t}</span></div>`;
+  function renderMode() {
+    $('#intro').innerHTML = sparring
+      ? `<b>스파링 영상에서 두 사람을 분석해요</b>
+         <div class="small muted">두 사람의 공격, 가드, 상대에게 닿은 공격(유효타 후보), 압박을 비교해서 라운드별로 채점하고 AI 추정 우세를 알려줘요. 영상은 이 기기 안에서만 분석해요.</div>`
+      : `<b>혼자 나오는 훈련 영상을 분석해요</b>
+         <div class="small muted">미트 훈련이나 섀도 영상을 올리면 잽·크로스·킥 횟수와 가드가 내려간 순간을 찾아줘요. 영상은 이 기기 안에서만 분석하고 어디에도 올리지 않아요.</div>`;
+    $('#tips').innerHTML = sparring
+      ? tip('두 사람을 옆에서 찍은 영상이 가장 정확해요') + tip('화면에 두 사람만 나와야 해요 (심판·관중이 크게 잡히면 헷갈려요)') + tip('분석이 끝나면 누가 나인지 골라요')
+      : tip('머리부터 발끝까지 보이면 킥까지, 상체만 보이면 펀치·가드만 분석해요') + tip('화면에 한 사람만 나와야 해요');
+    $('#roundField').hidden = !sparring;
+    $('#stanceField').hidden = sparring;
+  }
+  renderMode();
+  $('#mode').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-m]');
+    if (!b || !$('#progress').hidden) return;
+    sparring = b.dataset.m === 'sparring';
+    root.querySelectorAll('#mode button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    renderMode();
+  });
 
   function showError(msg) {
     $('#err').hidden = !msg;
@@ -86,7 +114,7 @@ export function mount(root, ctx) {
       $('#preview').hidden = false;
       $('#pickBtn span').textContent = '다른 영상 선택';
       $('#start').disabled = false;
-      const estMin = Math.max(1, Math.round(meta.duration * FPS * 0.04 / 60));
+      const estMin = Math.max(1, Math.round(meta.duration * FPS * (sparring ? 0.06 : 0.04) / 60));
       $('#eta').textContent = `예상 시간: 약 ${estMin}분 (기기 성능에 따라 달라요)`;
     } catch (err) {
       showError(err instanceof VideoError ? err.message : `영상을 열지 못했어요. (${err?.message || err})`);
@@ -98,6 +126,8 @@ export function mount(root, ctx) {
   $('#start').addEventListener('click', async () => {
     if (!file) return;
     const stance = pressedValue($('#stance'));
+    const people = sparring ? 2 : 1;
+    $('#mode').hidden = true;
     controller = new AbortController();
     $('#start').disabled = true;
     $('#pickBtn').hidden = true;
@@ -111,6 +141,7 @@ export function mount(root, ctx) {
     try {
       const res = await analyzeVideo(file, {
         fps: FPS,
+        people,
         signal: controller.signal,
         onProgress: (p) => {
           if (!alive) return;
@@ -122,6 +153,26 @@ export function mount(root, ctx) {
       });
       if (!alive) return;
       $('#eta').textContent = '결과 정리 중…';
+      if (people === 2) {
+        const id = 'p' + Date.now();
+        const data = { a: res.a, b: res.b, overlap: res.overlap };
+        let framesSaved = true;
+        try { await putFrames(id, data); } catch (e) { console.error(e); framesSaved = false; }
+        const rs = +pressedValue($('#roundSec'));
+        ctx.pendingSpar = {
+          data,
+          base: {
+            id, date: Date.now(), level: s.level, rating: null,
+            fileName: file.name, fileSize: file.size,
+            videoDurationSec: Math.round(res.duration * 10) / 10,
+            aspect: res.aspect, fps: res.fps, frameCount: frameCount(res.a), framesSaved,
+            roundSec: rs || null,
+          },
+        };
+        ctx.videoFile = file;
+        ctx.go('pick');
+        return;
+      }
       const { summary } = analyzeFrames(res.frames, { stance, level: s.level });
       const id = 'v' + Date.now();
       let framesSaved = true;
@@ -150,6 +201,7 @@ export function mount(root, ctx) {
       $('#progress').hidden = true;
       $('#pickBtn').hidden = false;
       $('#tips').hidden = false;
+      $('#mode').hidden = false;
       $('#start').disabled = false;
       if (e?.name === 'AbortError') showError('분석을 취소했어요.');
       else showError(e instanceof VideoError ? e.message : `분석 중 문제가 생겼어요. (${e?.message || e})`);

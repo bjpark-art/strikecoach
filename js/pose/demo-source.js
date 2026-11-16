@@ -97,3 +97,20 @@ export function createDemoSource({ stance = 'orthodox' } = {}) {
     stop() { running = false; handler = null; cancelAnimationFrame(raf); },
   };
 }
+
+// ---------- 스파링(2인) 데모: 두 사람이 옆으로 마주 본다 ----------
+function faceSideways(frame, facing, cx, scale = 0.38) {
+  const s = facing === 'right' ? -1 : 1; // 카메라 쪽(-z)으로 치던 동작을 옆(±x)으로 돌린다
+  const world = frame.world.map((p) => ({ x: s * p.z, y: p.y, z: -s * p.x, visibility: p.visibility }));
+  const image = world.map((p) => ({ x: cx + p.x * scale, y: 0.5 + p.y * scale, z: p.z, visibility: p.visibility }));
+  return { image, world };
+}
+
+/** A(왼쪽, 오른쪽을 봄)는 기본 9초 루프, B(오른쪽, 왼쪽을 봄)는 shift초 늦게 같은 루프. gap = 두 사람 중심 간격(화면 폭 대비). */
+export function demoSparringFrameAt(sec, { gap = 0.27, shift = 4.5 } = {}) {
+  return {
+    t: sec * 1000,
+    a: faceSideways(demoFrameAt(sec), 'right', 0.5 - gap / 2),
+    b: faceSideways(demoFrameAt(sec + shift), 'left', 0.5 + gap / 2),
+  };
+}

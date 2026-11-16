@@ -16,7 +16,7 @@ function palette() {
 }
 
 /** image 랜드마크(0~1)를 aspect 비율 영상이 contain으로 놓인 캔버스 위에 그린다. */
-export function drawSkeleton(canvas, image, { aspect = 1, hot = null } = {}) {
+export function drawSkeleton(canvas, image, { aspect = 1, hot = null, bone = null, joint = null, clear = true } = {}) {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth, h = canvas.clientHeight;
   if (!w || !h) return;
@@ -26,14 +26,16 @@ export function drawSkeleton(canvas, image, { aspect = 1, hot = null } = {}) {
   }
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, w, h);
+  if (clear) ctx.clearRect(0, 0, w, h);
   if (!image) return;
 
   const dw = Math.min(w, h * aspect), dh = dw / aspect;
   const ox = (w - dw) / 2, oy = (h - dh) / 2;
   const P = (i) => [ox + image[i].x * dw, oy + image[i].y * dh];
   const ok = (i) => image[i] && (image[i].visibility ?? 1) >= 0.4;
-  const c = palette();
+  const c = { ...palette() };
+  if (bone) c.bone = bone;
+  if (joint) c.joint = joint;
   const unit = Math.max(3, dh * 0.012);
 
   ctx.lineCap = 'round';
@@ -69,8 +71,9 @@ export function framingStatus(image) {
   if (!image) return { ok: false, msg: '사람을 찾는 중이에요' };
   const need = [0, 11, 12, 23, 24, 27, 28];
   const inside = (i) => image[i] && (image[i].visibility ?? 1) >= 0.5 && image[i].x > 0.02 && image[i].x < 0.98 && image[i].y > 0.02 && image[i].y < 0.98;
-  if (!inside(27) || !inside(28)) return { ok: false, msg: '발이 안 보여요. 조금 뒤로 가세요' };
   if (!inside(0)) return { ok: false, msg: '머리가 잘렸어요. 폰을 조금 낮추거나 뒤로' };
-  if (!need.every(inside)) return { ok: false, msg: '몸 전체가 화면 안에 들어오게 서주세요' };
-  return { ok: true, msg: '전신이 잘 보여요' };
+  if (need.every(inside)) return { ok: true, level: 'full', msg: '전신이 잘 보여요' };
+  // 상체 모드: 머리·어깨·팔이 보이면 펀치와 가드는 분석할 수 있다.
+  if ([11, 12, 13, 14, 15, 16].every(inside)) return { ok: true, level: 'upper', msg: '상체만 보여요 · 킥은 세지 않아요 (뒤로 가면 전신 분석)' };
+  return { ok: false, msg: '몸 전체가 화면 안에 들어오게 서주세요' };
 }
