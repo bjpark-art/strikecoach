@@ -47,3 +47,8 @@ function render() {
 
 window.addEventListener('hashchange', render);
 render();
+
+// 배포 직후 옛 파일과 새 파일이 섞이지 않게 하고(항상 최신 확인), 오프라인에서도 열리게 한다. sw.js 참고.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch((e) => console.warn('서비스 워커 등록 실패', e));
+}
