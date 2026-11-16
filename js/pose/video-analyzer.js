@@ -43,21 +43,34 @@ export async function loadVideo(file) {
   return { video, url, duration: video.duration, aspect: video.videoWidth / video.videoHeight };
 }
 
+/** 분석할 프레임 시각(초) 목록. ranges가 비면 영상 전체. 프레임 시각은 영상 속 시각 그대로 둔다. */
+export function frameTimes(duration, fps, ranges = null) {
+  const all = Math.floor(duration * fps) + 1;
+  const out = [];
+  for (let i = 0; i < all; i++) {
+    const t = Math.min(i / fps, Math.max(0, duration - 0.001));
+    if (!ranges?.length || ranges.some(([a, b]) => t >= a && t <= b)) out.push(t);
+  }
+  return out;
+}
+
 /**
  * people: 1이면 { frames }, 2면 { a, b, overlap } (두 사람을 추적해 따로 저장).
+ * ranges: [[시작초, 끝초], ...] 이 구간만 분석(라운드 사이 휴식·준비운동 빼기). 비면 영상 전체.
  */
-export async function analyzeVideo(file, { fps = 20, people = 1, onProgress, signal } = {}) {
+export async function analyzeVideo(file, { fps = 20, people = 1, ranges = null, onProgress, signal } = {}) {
   const { video, url, duration, aspect } = await loadVideo(file);
   try {
     const landmarker = await getLandmarker({ numPoses: people });
-    const n = Math.floor(duration * fps) + 1;
+    const times = frameTimes(duration, fps, ranges);
+    const n = times.length;
     const pa = createPacker(n), pb = people === 2 ? createPacker(n) : null;
     const overlap = people === 2 ? new Uint8Array(n) : null;
     const tracker = people === 2 ? createTracker() : null;
     const base = nextTimestampBase(landmarker);
     for (let i = 0; i < n; i++) {
       if (signal?.aborted) throw new DOMException('분석을 취소했어요', 'AbortError');
-      const t = Math.min(i / fps, Math.max(0, duration - 0.001));
+      const t = times[i];
       if (Math.abs(video.currentTime - t) > 1e-4) {
         video.currentTime = t;
         await once(video, 'seeked', 2000);

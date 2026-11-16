@@ -1,9 +1,12 @@
 import { createAnalyzer } from './analyzer.js';
 import { frameCount, unpackFrame } from '../pose/frames.js';
 
-/** 저장된 프레임 데이터 전체를 분석기에 통과시킨다. 스탠스를 바꿔 다시 계산할 때도 쓴다. */
-export function analyzeFrames(buf, { stance = 'orthodox', level = 'beginner', tune } = {}) {
-  const an = createAnalyzer({ stance, level, tune });
+/**
+ * 저장된 프레임 데이터 전체를 분석기에 통과시킨다. 스탠스를 바꿔 다시 계산할 때도 쓴다.
+ * origin: 0이면 이벤트 시각이 영상 속 시각과 같다(앱의 영상 분석 프레임은 영상 시각으로 저장됨).
+ */
+export function analyzeFrames(buf, { stance = 'orthodox', level = 'beginner', tune, origin = null } = {}) {
+  const an = createAnalyzer({ stance, level, tune, origin });
   const n = frameCount(buf);
   const tracked = new Uint8Array(n);
   for (let i = 0; i < n; i++) tracked[i] = an.update(unpackFrame(buf, i)).tracked ? 1 : 0;

@@ -30,6 +30,14 @@ export function mount(root, ctx) {
   let alive = true, video = null, url = null, raf = 0;
   let data = null, meBuf = null, oppBuf = null;
   let events = [], oppEvents = [], marks = [], gaps = [], overlay = true;
+  // 분석하지 않은 부분(구간을 골라 분석한 경우): 고른 구간의 바깥
+  const skipped = [];
+  if (s.ranges?.length) {
+    let prev = 0;
+    for (const [a, b] of s.ranges) { if (a > prev) skipped.push({ start: prev * 1000, end: a * 1000 }); prev = b; }
+    if (prev < s.videoDurationSec) skipped.push({ start: prev * 1000, end: s.videoDurationSec * 1000 });
+  }
+  const inSkipped = (t) => skipped.some((k) => t > k.start && t < k.end);
   let durMs = s.videoDurationSec * 1000;
   const colors = { me: css('--accent'), opp: css('--opp') };
 
@@ -64,6 +72,8 @@ export function mount(root, ctx) {
     let start = null;
     for (let i = 0; i < flags.length; i++) {
       const t = frameTime(buf, i);
+      // 분석하지 않은 부분을 건너뛰면 끊긴 구간도 거기서 끊는다
+      if (start != null && i > 0 && t - frameTime(buf, i - 1) > 500) { const e = frameTime(buf, i - 1); if (e - start >= minMs) out.push({ start, end: e }); start = null; }
       if (flags[i] && start == null) start = t;
       if (!flags[i] && start != null) { if (t - start >= minMs) out.push({ start, end: t }); start = null; }
     }
@@ -77,13 +87,13 @@ export function mount(root, ctx) {
       oppBuf = data[s.me === 'a' ? 'b' : 'a'];
     }
     durMs = Math.max(durMs, frameTime(meBuf, frameCount(meBuf) - 1));
-    const me = analyzeFrames(meBuf, { stance: s.stance, level: s.level });
+    const me = analyzeFrames(meBuf, { stance: s.stance, level: s.level, origin: 0 });
     events = me.summary.events;
     const lost = Array.from(me.tracked, (x) => (x ? 0 : 1));
     gaps = ranges(lost, meBuf);
     if (spar) {
       gaps = gaps.concat(ranges(Array.from(data.overlap), meBuf)).sort((x, y) => x.start - y.start);
-      oppEvents = analyzeFrames(oppBuf, { stance: s.oppStance, level: s.level }).summary.events;
+      oppEvents = analyzeFrames(oppBuf, { stance: s.oppStance, level: s.level, origin: 0 }).summary.events;
     }
     const overlaps = (st, en) => gaps.some((g) => g.start < en && g.end > st);
     marks = guardDropIntervals(events, durMs).map((d) => ({ ...d, type: 'drop', t: d.detect, unsure: overlaps(d.start, d.end) }));
@@ -140,6 +150,7 @@ export function mount(root, ctx) {
       <div>
         <div class="tl" id="tl">
           <div class="tl-track"></div>
+          ${skipped.map((g) => `<div class="tl-skip" style="left:${pct(g.start)};width:calc(${pct(g.end)} - ${pct(g.start)})"></div>`).join('')}
           ${gaps.map((g) => `<div class="tl-gap" style="left:${pct(g.start)};width:calc(${pct(g.end)} - ${pct(g.start)})"></div>`).join('')}
           <div class="tl-prog" id="prog"></div>
           <div class="tl-head" id="headDot"></div>
@@ -152,6 +163,7 @@ export function mount(root, ctx) {
           <span><i class="sw-mk"></i>내 가드 하락</span>
           ${spar ? '<span><i class="sw-hitme"></i>내 유효타 후보</span><span><i class="sw-hitopp"></i>상대 유효타 후보</span>' : ''}
           <span><i class="sw-punch"></i>펀치</span><span><i class="sw-kick"></i>킥</span>
+          ${skipped.length ? '<span><i class="sw-skip"></i>분석 안 함</span>' : ''}
           ${gaps.length ? `<span><i class="sw-gap"></i>${spar ? '인식 끊김·겹침' : '인식 끊김'}</span>` : ''}
         </div>
       </div>
@@ -173,7 +185,7 @@ export function mount(root, ctx) {
     const loop = () => {
       if (!alive) return;
       const t = video.currentTime * 1000;
-      if (overlay) {
+      if (overlay && !inSkipped(t)) {
         const i = findFrame(meBuf, t);
         const d = activeDrop(t);
         drawSkeleton(cv, i >= 0 ? unpackFrame(meBuf, i).image : null, { aspect: s.aspect, hot: d ? handIdx(d.hand) : null, bone: spar ? colors.me : null, joint: spar ? colors.me : null });

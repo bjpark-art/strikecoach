@@ -32,7 +32,9 @@ export function mount(root, ctx) {
   const errs = topErrors(s);
   const tech = [['잽', s.punches.jab, false], ['크로스', s.punches.cross, false], ['훅', s.punches.hook || 0, false], ['어퍼컷', s.punches.uppercut || 0, false], ['앞발 킥', s.kicks.lead, true], ['뒷발 킥', s.kicks.rear, true]];
   const max = Math.max(1, ...tech.map((t) => t[1]));
-  const durMs = Math.max(1, s.durationSec * 1000);
+  // 구간을 골라 분석한 영상은 이벤트 시각이 영상 속 시각이라, 막대 끝을 영상 길이로 둔다.
+  const stripSec = s.ranges?.length ? s.videoDurationSec : s.durationSec;
+  const durMs = Math.max(1, stripSec * 1000);
 
   root.innerHTML = `
   <section class="screen">
@@ -53,6 +55,7 @@ export function mount(root, ctx) {
             <div><div class="num">${s.totalKicks}</div><div class="small muted">킥</div></div>
             <div><div class="num">${fmtTime(s.durationSec)}</div><div class="small muted">분석 시간</div></div>
           </div>
+          ${s.ranges?.length ? `<div class="small muted" style="margin-top:6px">고른 구간 ${s.ranges.length}개만 분석 (${s.ranges.map(([a, b]) => `${fmtTime(a)}–${fmtTime(b)}`).join(', ')})</div>` : ''}
         </div>
       </div>
 
@@ -71,7 +74,7 @@ export function mount(root, ctx) {
             <div class="track"></div>
             ${s.dropTimes.map(([t]) => `<span class="mk" style="left:${Math.min(100, t / durMs * 100).toFixed(1)}%"></span>`).join('')}
           </div>
-          <div class="strip-labels num"><span>0:00</span><span>${fmtTime(s.durationSec)}</span></div>` : ''}
+          <div class="strip-labels num"><span>0:00</span><span>${fmtTime(stripSec)}</span></div>` : ''}
       </div>
 
       <div class="card">
@@ -115,7 +118,7 @@ export function mount(root, ctx) {
     const buf = await getFrames(s.id);
     if (!buf) { e.currentTarget.textContent = '분석 데이터가 없어 다시 계산할 수 없어요'; return; }
     const stance = s.stance === 'southpaw' ? 'orthodox' : 'southpaw';
-    const { summary } = analyzeFrames(buf, { stance, level: s.level });
+    const { summary } = analyzeFrames(buf, { stance, level: s.level, origin: 0 });
     saveSession({ ...s, stance, ...sessionStats(summary) });
     ctx.reportId = s.id;
     mount(root, ctx);

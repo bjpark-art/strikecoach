@@ -41,7 +41,8 @@ export function sidesFor(stance) {
  * 프레임 단위 자세 분석기.
  * frame = { t: ms, world: 3D 랜드마크(미터, y 아래 방향), image: 정규화 랜드마크(가시성 판단용) }
  */
-export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved = true, tune = {} } = {}) {
+// origin: 이벤트 시각(t)의 기준(ms). 없으면 첫 프레임 시각. 영상 분석은 0을 넘겨 영상 속 실제 시각으로 맞춘다(일부 구간만 분석할 때 필요).
+export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved = true, tune = {}, origin = null } = {}) {
   const P = { ...DEFAULT_TUNE, ...tune };
   const { lead, rear } = sidesFor(stance);
   const role = { [lead]: 'lead', [rear]: 'rear' };
@@ -59,7 +60,7 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
     events: [],
   };
   let lastT = null;
-  let startT = null;
+  let startT = origin;
   const strikes = curved ? createStrikeDetector(tune) : null;
   const straightTimes = { l: [], r: [] };
   const recoverTimes = { l: [], r: [] }; // 가드 하락에서 손을 다시 올린 시점 (어퍼컷으로 오인하지 않게)

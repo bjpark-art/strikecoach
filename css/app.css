@@ -181,6 +181,8 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; }
 .sw-mk { background: var(--warn); } .sw-punch { background: var(--ink); } .sw-kick { background: var(--accent); }
+.tl-skip { position: absolute; top: 9px; height: 16px; background: var(--muted); opacity: .22; border-radius: 3px; }
+.sw-skip { background: var(--muted); opacity: .35; }
 .sw-gap { background: var(--surface-2); border: 1px dashed var(--muted); }
 .ctrls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .play { width: 48px; height: 48px; border-radius: 50%; border: 0; background: var(--ink); color: var(--surface); display: grid; place-items: center; }

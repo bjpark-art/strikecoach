@@ -11,6 +11,7 @@ import { scoreRounds, splitRounds } from '../sparring/judge.js';
 import { analyzeSparring } from '../sparring/analyze.js';
 import { punchFeatures, classifyFeatures, cocoFrame } from '../analysis/punch-classifier.js';
 import FIXTURE from './punch-fixture.js';
+import { frameTimes } from '../pose/video-analyzer.js';
 
 const results = [];
 function test(name, fn) {
@@ -322,6 +323,24 @@ test('훅·어퍼컷 감지: 데모(잽·크로스·킥·가드 하락)에서는
   const d = sparBuffers(DEMO_LOOP_SEC);
   const p = analyzeFrames(d.a).summary.punches;
   eq([p.hook, p.uppercut], [0, 0], '옆모습 데모');
+});
+
+test('분석 구간: 고른 구간의 프레임만, 영상 속 시각 그대로', () => {
+  eq(frameTimes(2, 2).length, 5, '구간 없으면 영상 전체');
+  const ts = frameTimes(10, 2, [[1, 2], [5, 6]]);
+  eq(ts, [1, 1.5, 2, 5, 5.5, 6], '두 구간');
+});
+
+test('분석 구간: origin 0이면 이벤트 시각이 영상 속 시각', () => {
+  const run = (offsetSec, origin) => {
+    const an = createAnalyzer({ origin });
+    for (let i = 0; i <= DEMO_LOOP_SEC * 30; i++) an.update({ ...demoFrameAt(i / 30, 'orthodox'), t: offsetSec * 1000 + (i / 30) * 1000 });
+    return an.summary().events.filter((e) => e.type === 'punch' || e.type === 'kick');
+  };
+  const base = run(0, null);
+  ok(base.length > 0, '데모에서 펀치·킥이 있어야 함');
+  eq(run(60, 0).map((e) => Math.round(e.t - 60000)), base.map((e) => Math.round(e.t)), '60초 뒤 구간이면 60초 밀림');
+  eq(run(60, null).map((e) => Math.round(e.t)), base.map((e) => Math.round(e.t)), '기준 없으면 첫 프레임 기준(실시간 훈련)');
 });
 
 const failed = results.filter((r) => !r[1]);

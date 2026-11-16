@@ -16,6 +16,9 @@ export function mount(root, ctx) {
   let controller = null;
   let wakeLock = null;
   let sparring = ctx.uploadMode === 'sparring';
+  let duration = 0;
+  let ranges = [];        // [[시작초, 끝초], ...] 비면 영상 전체
+  let pendingStart = null; // 구간 시작만 정한 상태
   ctx.uploadMode = null;
 
   root.innerHTML = `
@@ -38,6 +41,14 @@ export function mount(root, ctx) {
           <div class="small muted">라운드 길이 (라운드별로 채점해요)</div>
           <div class="chips" data-single id="roundSec">
             ${chip('0', '영상 전체', '0')}${chip('120', '2분', '0')}${chip('180', '3분', '0')}
+          </div>
+        </div>
+        <div class="field" id="rangeField">
+          <div class="small muted">분석할 구간 — 라운드만 골라 두면 휴식·준비운동 동작은 세지 않아요</div>
+          <div class="chips" id="rangeList"></div>
+          <div class="row">
+            <button class="btn btn-ghost grow" id="markRange" type="button"></button>
+            <button class="link" id="cancelRange" type="button" hidden>취소</button>
           </div>
         </div>
         <div class="field" id="stanceField">
@@ -79,6 +90,8 @@ export function mount(root, ctx) {
       : tip('머리부터 발끝까지 보이면 킥까지, 상체만 보이면 펀치·가드만 분석해요') + tip('화면에 한 사람만 나와야 해요');
     $('#roundField').hidden = !sparring;
     $('#stanceField').hidden = sparring;
+    $('#rangeField').hidden = sparring;
+    updateEta();
   }
   renderMode();
   $('#mode').addEventListener('click', (e) => {
@@ -87,6 +100,52 @@ export function mount(root, ctx) {
     sparring = b.dataset.m === 'sparring';
     root.querySelectorAll('#mode button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
     renderMode();
+  });
+
+  // ---------- 분석 구간 ----------
+  const rangeSec = () => (sparring || !ranges.length ? duration : ranges.reduce((a, [x, y]) => a + (y - x), 0));
+  function updateEta() {
+    if (!duration) return;
+    const estMin = Math.max(1, Math.round(rangeSec() * FPS * (sparring ? 0.06 : 0.04) / 60));
+    $('#eta').textContent = `예상 시간: 약 ${estMin}분 (기기 성능에 따라 달라요)`;
+  }
+  function addRange(a, b) {
+    if (b - a < 1) return false;
+    const all = [...ranges, [a, b]].sort((x, y) => x[0] - y[0]);
+    const merged = [];
+    for (const r of all) {
+      const last = merged[merged.length - 1];
+      if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]); else merged.push([...r]);
+    }
+    ranges = merged;
+    return true;
+  }
+  function renderRanges() {
+    $('#rangeList').innerHTML = ranges.length
+      ? ranges.map(([a, b], i) => `<button class="chip num" type="button" data-i="${i}" aria-label="${fmtTime(a)}부터 ${fmtTime(b)}까지 구간 빼기">${fmtTime(a)}–${fmtTime(b)} ✕</button>`).join('')
+        + `<span class="small muted" style="align-self:center">합계 ${fmtTime(rangeSec())}</span>`
+      : `<span class="small muted">영상 전체 (${fmtTime(duration)})</span>`;
+    $('#markRange').textContent = pendingStart == null
+      ? '＋ 지금 위치에서 구간 시작'
+      : `지금 위치에서 구간 끝 (${fmtTime(pendingStart)}부터)`;
+    $('#cancelRange').hidden = pendingStart == null;
+    updateEta();
+  }
+  $('#markRange').addEventListener('click', () => {
+    const now = $('#pv').currentTime || 0;
+    showError(null);
+    if (pendingStart == null) { pendingStart = now; renderRanges(); return; }
+    const [a, b] = pendingStart <= now ? [pendingStart, now] : [now, pendingStart];
+    if (!addRange(a, b)) { showError('구간은 1초 이상이어야 해요. 영상을 끝 위치로 옮긴 뒤 눌러 주세요.'); return; }
+    pendingStart = null;
+    renderRanges();
+  });
+  $('#cancelRange').addEventListener('click', () => { pendingStart = null; renderRanges(); });
+  $('#rangeList').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-i]');
+    if (!b || !$('#progress').hidden) return;
+    ranges.splice(+b.dataset.i, 1);
+    renderRanges();
   });
 
   function showError(msg) {
@@ -114,8 +173,10 @@ export function mount(root, ctx) {
       $('#preview').hidden = false;
       $('#pickBtn span').textContent = '다른 영상 선택';
       $('#start').disabled = false;
-      const estMin = Math.max(1, Math.round(meta.duration * FPS * (sparring ? 0.06 : 0.04) / 60));
-      $('#eta').textContent = `예상 시간: 약 ${estMin}분 (기기 성능에 따라 달라요)`;
+      duration = meta.duration;
+      ranges = [];
+      pendingStart = null;
+      renderRanges();
     } catch (err) {
       showError(err instanceof VideoError ? err.message : `영상을 열지 못했어요. (${err?.message || err})`);
     }
@@ -127,6 +188,9 @@ export function mount(root, ctx) {
     if (!file) return;
     const stance = pressedValue($('#stance'));
     const people = sparring ? 2 : 1;
+    if (!sparring && pendingStart != null) { addRange(pendingStart, duration); pendingStart = null; renderRanges(); } // 시작만 정했으면 끝까지
+    const useRanges = !sparring && ranges.length ? ranges.map((r) => [...r]) : null;
+    $('#rangeField').querySelectorAll('button').forEach((b) => { b.disabled = true; });
     $('#mode').hidden = true;
     controller = new AbortController();
     $('#start').disabled = true;
@@ -142,6 +206,7 @@ export function mount(root, ctx) {
       const res = await analyzeVideo(file, {
         fps: FPS,
         people,
+        ranges: useRanges,
         signal: controller.signal,
         onProgress: (p) => {
           if (!alive) return;
@@ -173,7 +238,7 @@ export function mount(root, ctx) {
         ctx.go('pick');
         return;
       }
-      const { summary } = analyzeFrames(res.frames, { stance, level: s.level });
+      const { summary } = analyzeFrames(res.frames, { stance, level: s.level, origin: 0 });
       const id = 'v' + Date.now();
       let framesSaved = true;
       try { await putFrames(id, res.frames); } catch (e) { console.error(e); framesSaved = false; }
@@ -190,6 +255,7 @@ export function mount(root, ctx) {
         fps: res.fps,
         frameCount: frameCount(res.frames),
         framesSaved,
+        ranges: useRanges,
         rating: null,
         ...sessionStats(summary),
       });
@@ -203,6 +269,7 @@ export function mount(root, ctx) {
       $('#tips').hidden = false;
       $('#mode').hidden = false;
       $('#start').disabled = false;
+      $('#rangeField').querySelectorAll('button').forEach((b) => { b.disabled = false; });
       if (e?.name === 'AbortError') showError('분석을 취소했어요.');
       else showError(e instanceof VideoError ? e.message : `분석 중 문제가 생겼어요. (${e?.message || e})`);
     } finally {
