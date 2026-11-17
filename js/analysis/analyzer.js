@@ -24,6 +24,15 @@ export const DEFAULT_TUNE = {
   // 아래 두 조건은 없는 펀치를 더 줄이지만(분당 4.4까지) 실제 펀치도 잃어서(BoxingVI -2~5%p, 높이 든 미트 치기) 기본은 끔
   straightPreBent: null, // 예: 0.82 — 펴기 직전 0.3초 안에 팔 펴짐이 이 값 이하였던 적이 있어야 펀치
   straightMaxRise: null, // 예: 0.3 — 손목이 어깨보다 몸통 길이 × 이 값 넘게 위면 펀치 아님
+  // 준비운동·스트레칭이 펀치로 세지던 문제(펀치 없는 영상 분당 5.9)를 줄이는 조건 3개 (2026-11-17, PROGRESS.md 참고).
+  // 검증: 펀치 없는 영상 47 → 25개(분당 3.2), 직접 단 정답 펀치 센 비율 그대로, BoxingVI 1,847개 중 2개만 잃음
+  // - 양팔을 함께 옆으로 벌림(T자·팔 흔들기): 두 팔 모두 펴짐 ≥ 0.7이고, 두 팔 방향과 어깨선 바깥쪽의 코사인이 둘 다 이 값 이상이면 스트레이트 아님
+  //   (실제 펀치는 두 값 중 작은 쪽이 최대 0.55. 옆모습 잽은 한 팔만 어깨선 방향이라 걸리지 않음)
+  straightMaxSpread: 0.7,
+  // - 두 손을 함께 머리 위로(머리 위 스트레칭): 두 손목 모두 어깨보다 몸통 길이 × 이 값 넘게 위면 스트레이트 아님
+  straightBothRaised: 0.3,
+  // - 훅·어퍼컷: 양팔이 함께 움직이면 아님. [반대 팔 이동 / 친 팔 이동 최소, 두 손목 세로 속도 상관 최소] (구간 시작 0.2초 전~끝)
+  curvedMirror: [0.8, 0.85],
   punchSource: 'rule', //'rule': 스트레이트는 3D 규칙, 훅·어퍼컷은 분류기 / 'classifier': 모든 펀치를 분류기로
 };
 const RETRACT_STRAIGHT = 0.8;
@@ -40,6 +49,17 @@ const STRAIGHT_OVERLAP_MS = 150;
 const CORE = [LM.lSh, LM.rSh, LM.lEl, LM.rEl, LM.lWr, LM.rWr];
 const HIPS = [LM.lHip, LM.rHip];
 const LEGS = [LM.lKn, LM.rKn, LM.lAn, LM.rAn];
+
+// 두 팔이 각자 어깨선 바깥쪽을 얼마나 향하는지(코사인) 중 작은 값. 양팔을 옆으로 벌리면 1에 가깝다.
+function armsSpread(m, om) {
+  const u = { x: m.shoulder.x - om.shoulder.x, y: m.shoulder.y - om.shoulder.y, z: m.shoulder.z - om.shoulder.z };
+  const cos = (from, to, sign) => {
+    const v = { x: to.x - from.x, y: to.y - from.y, z: to.z - from.z };
+    const n = Math.hypot(u.x, u.y, u.z) * Math.hypot(v.x, v.y, v.z);
+    return n ? (sign * (u.x * v.x + u.y * v.y + u.z * v.z)) / n : 0;
+  };
+  return Math.min(cos(m.shoulder, m.wrist, 1), cos(om.shoulder, om.wrist, -1));
+}
 
 export function sidesFor(stance) {
   return stance === 'southpaw' ? { lead: 'r', rear: 'l' } : { lead: 'l', rear: 'r' };
@@ -72,6 +92,24 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
   const strikes = curved ? createStrikeDetector(tune) : null;
   const straightTimes = { l: [], r: [] };
   const recoverTimes = { l: [], r: [] }; // 가드 하락에서 손을 다시 올린 시점 (어퍼컷으로 오인하지 않게)
+  const fh = []; // 최근 1.5초 인식된 프레임: { t, pl, pr: 손목 위치(어깨 기준, 몸통 길이 배수 [x, y, z]) }
+  // 양팔이 함께 움직였는지: { ratio: 반대 팔 이동 / 친 팔 이동, corr: 두 손목 세로 속도 상관 }
+  function mirror(side, t0, t1) {
+    const hs = fh.filter((h) => h.t >= t0 && h.t <= t1);
+    if (hs.length < 4) return null;
+    const me = side === 'l' ? 'pl' : 'pr', ot = side === 'l' ? 'pr' : 'pl';
+    let ps = 0, po = 0; const va = [], vb = [];
+    for (let i = 1; i < hs.length; i++) {
+      const a0 = hs[i - 1][me], a1 = hs[i][me], b0 = hs[i - 1][ot], b1 = hs[i][ot];
+      ps += Math.hypot(a1[0] - a0[0], a1[1] - a0[1], a1[2] - a0[2]);
+      po += Math.hypot(b1[0] - b0[0], b1[1] - b0[1], b1[2] - b0[2]);
+      va.push(a1[1] - a0[1]); vb.push(b1[1] - b0[1]);
+    }
+    const ma = va.reduce((x, y) => x + y, 0) / va.length, mb = vb.reduce((x, y) => x + y, 0) / vb.length;
+    let num = 0, da = 0, db = 0;
+    va.forEach((v, i) => { num += (v - ma) * (vb[i] - mb); da += (v - ma) ** 2; db += (vb[i] - mb) ** 2; });
+    return { ratio: po / (ps + 1e-6), corr: num / Math.sqrt(da * db + 1e-12) };
+  }
 
   // 분류기가 낸 타격 구간을 펀치로 센다.
   // rule 모드: 훅·어퍼컷만 (스트레이트는 3D 규칙), 같은 팔 스트레이트와 겹치면 뺀다. classifier 모드: 스트레이트도 잽/크로스로 센다.
@@ -88,6 +126,10 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
       }
       const recovering = recoverTimes[st.side].some((x) => x >= st.start - 300 && x <= st.end + 100) || hand[st.side].reported;
       if (recovering && P.guardFilter) continue;
+      if (curved && P.curvedMirror) {
+        const mm = mirror(st.side, st.start - 200, st.end);
+        if (mm && mm.ratio >= P.curvedMirror[0] && mm.corr >= P.curvedMirror[1]) continue;
+      }
       const kind = straight ? (role[st.side] === 'lead' ? 'jab' : 'cross') : st.label;
       s.punches[kind]++;
       events.push({ type: 'punch', kind, hand: role[st.side], side: st.side, t: st.end - startT, prob: Math.round(st.prob * 100) / 100 });
@@ -117,6 +159,9 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
     const T = (fullBody ? torso(world) : dist(world[LM.lSh], world[LM.rSh]) * UPPER_TORSO_RATIO) || 0.5;
     const events = [];
     const shY = (world[LM.lSh].y + world[LM.rSh].y) / 2;
+    const relWrist = (sd) => { const w = world[LM[sd + 'Wr']], o = world[LM[sd + 'Sh']]; return [(w.x - o.x) / T, (w.y - o.y) / T, (w.z - o.z) / T]; };
+    fh.push({ t, pl: relWrist('l'), pr: relWrist('r') });
+    while (fh.length && t - fh[0].t > 1500) fh.shift();
     const guardLine = shY + slack * T; // y는 아래로 증가: 손목 y가 이보다 작으면 가드가 올라간 상태
     const ok = {};
     const below = {}; // 손목이 가드 라인보다 얼마나 아래인지(미터, +면 아래)
@@ -143,7 +188,10 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
           if (straightTimes[sd].length > 10) straightTimes[sd].shift();
           const wasBent = P.straightPreBent == null || a.hist.some(([ht, st]) => t - ht <= 300 && st <= P.straightPreBent);
           const notRaised = P.straightMaxRise == null || (m.shoulder.y - m.wrist.y) / T <= P.straightMaxRise;
-          if (wasBent && notRaised) {
+          const om = armMetrics(world, sd === 'l' ? 'r' : 'l', T); // 반대 팔
+          const notStretch = (P.straightMaxSpread == null || om.straight < 0.7 || armsSpread(m, om) < P.straightMaxSpread)
+            && (P.straightBothRaised == null || Math.min(m.shoulder.y - m.wrist.y, om.shoulder.y - om.wrist.y) / T <= P.straightBothRaised);
+          if (wasBent && notRaised && notStretch) {
             if (P.straightHoldMs == null) countStraight(t);
             else { a.pending = t; a.pendingAge = 0; } // 회수하면 센다
           }

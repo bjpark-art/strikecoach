@@ -377,6 +377,33 @@ test('스트레이트: 팔을 뻗은 채 2초 두면(스트레칭) 세지 않고
   eq(run(2), 0, '2초 뻗고 있던 팔');
 });
 
+test('스트레칭: 양팔을 옆으로 벌리거나 머리 위로 뻗으면 세지 않고, 앞으로 친 크로스는 센다', () => {
+  // 직접 만든 자세(미터, y 아래 방향, z 음수 = 카메라 쪽). 어깨 높이 -0.5, 몸통 길이 0.5
+  const P = (x, y, z) => ({ x, y, z, visibility: 1 });
+  const guard = { l: [P(0.22, -0.3, -0.12), P(0.12, -0.55, -0.2)], r: [P(-0.22, -0.3, -0.12), P(-0.12, -0.55, -0.2)] };
+  const pose = (arms) => {
+    const w = new Array(33).fill(null);
+    w[0] = P(0, -0.7, -0.05); w[9] = P(0.03, -0.63, -0.08); w[10] = P(-0.03, -0.63, -0.08);
+    w[11] = P(0.18, -0.5, 0); w[12] = P(-0.18, -0.5, 0);
+    [w[13], w[15]] = (arms.l || guard.l); [w[14], w[16]] = (arms.r || guard.r);
+    w[23] = P(0.1, 0, 0); w[24] = P(-0.1, 0, 0); w[25] = P(0.1, 0.45, 0); w[26] = P(-0.1, 0.45, 0); w[27] = P(0.1, 0.9, 0); w[28] = P(-0.1, 0.9, 0);
+    const image = w.map((p) => p && { x: 0.5 + p.x * 0.4, y: 0.5 + p.y * 0.4, visibility: 1 });
+    return { world: w, image };
+  };
+  const run = (arms) => {
+    const an = createAnalyzer({ stance: 'orthodox' });
+    let t = 0;
+    const feed = (f, n) => { for (let k = 0; k < n; k++) { an.update({ ...f, t }); t += 50; } };
+    feed(pose({}), 10); feed(pose(arms), 4); feed(pose({}), 10);
+    return jc(an.summary().punches);
+  };
+  const side = (s) => [P(s * 0.46, -0.5, 0), P(s * 0.74, -0.5, 0)];
+  const up = (s) => [P(s * 0.2, -0.78, -0.02), P(s * 0.22, -1.06, -0.04)];
+  eq(run({ l: side(1), r: side(-1) }), { jab: 0, cross: 0 }, '양팔 옆으로(T자)');
+  eq(run({ l: up(1), r: up(-1) }), { jab: 0, cross: 0 }, '양팔 머리 위로');
+  eq(run({ r: [P(-0.16, -0.5, -0.28), P(-0.14, -0.5, -0.56)] }), { jab: 0, cross: 1 }, '앞으로 친 크로스');
+});
+
 const failed = results.filter((r) => !r[1]);
 document.getElementById('list').innerHTML = results.map(([n, pass, msg]) =>
   `<li class="${pass ? 'pass' : 'fail'}">${pass ? '✓' : '✗'} ${n}${msg ? `<pre>${msg}</pre>` : ''}</li>`).join('');
