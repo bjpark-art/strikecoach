@@ -355,6 +355,28 @@ test('스파링 구간: 고른 구간 하나가 한 라운드', () => {
   eq(r.rounds.map((x) => x.winner), ['me', 'opp'], '구간 밖(150초) 유효타는 어느 라운드에도 안 들어감');
 });
 
+test('스트레이트: 팔을 뻗은 채 2초 두면(스트레칭) 세지 않고, 바로 회수하면 센다', () => {
+  // 데모에서 첫 잽이 감지되는 시각을 찾아, 그 프레임을 2초 동안 그대로 두는 영상을 만든다
+  const probe = createAnalyzer({ tune: { straightHoldMs: null } });
+  let jabT = null;
+  for (let i = 0; i <= DEMO_LOOP_SEC * 30 && jabT == null; i++) {
+    const r = probe.update(demoFrameAt(i / 30));
+    if (r.events.some((e) => e.type === 'punch' && e.kind === 'jab')) jabT = i / 30;
+  }
+  ok(jabT != null, '데모에 잽이 있어야 함');
+  const run = (holdSec) => {
+    const an = createAnalyzer();
+    let t = 0;
+    for (; t <= jabT; t += 1 / 30) an.update({ ...demoFrameAt(t), t: t * 1000 });
+    const held = demoFrameAt(jabT);
+    for (let k = 1; k <= holdSec * 30; k++) an.update({ ...held, t: (jabT + k / 30) * 1000 });
+    for (let k = 1; k <= 30; k++) an.update({ ...demoFrameAt(jabT + k / 30), t: (jabT + holdSec + k / 30) * 1000 });
+    return an.summary().punches.jab;
+  };
+  eq(run(0), 1, '바로 회수한 잽');
+  eq(run(2), 0, '2초 뻗고 있던 팔');
+});
+
 const failed = results.filter((r) => !r[1]);
 document.getElementById('list').innerHTML = results.map(([n, pass, msg]) =>
   `<li class="${pass ? 'pass' : 'fail'}">${pass ? '✓' : '✗'} ${n}${msg ? `<pre>${msg}</pre>` : ''}</li>`).join('');

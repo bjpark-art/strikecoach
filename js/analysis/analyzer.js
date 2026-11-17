@@ -16,6 +16,14 @@ export const DEFAULT_TUNE = {
   // 달리기처럼 무릎을 굽힌 채 뒤꿈치만 올라가는 동작을 빼기 위함(실제 영상: 달리기는 펴짐 ≤ 0.80, 발목 높이 ≤ -0.46).
   kickExt: 0.85,
   kickAnkle: -0.35,  // (엉덩이 y - 발목 y) / 몸통 길이. 0이면 엉덩이 높이
+  // 스트레이트(잽·크로스) 확인 조건. 팔을 펴는 순간이 아니라 다시 굽힐 때(회수) 센다 → 최대 straightHoldMs만큼 늦게 센다.
+  // 준비운동·스트레칭·팔 흔들기가 펀치로 세지던 문제(펀치 없는 영상에서 분당 11개)를 줄이려고 넣었다.
+  // 검증(2026-11-17): 펀치 없는 영상 분당 11.0 → 5.9, 직접 단 정답 영상 센 비율 그대로(48.7%), Mixkit 29.1 → 27.3%,
+  // BoxingVI 35.8 → 34.7%. 인식이 끊긴 프레임은 시간에 넣지 않는다.
+  straightHoldMs: 600,   // 이 시간 안에 회수해야 펀치. null이면 펴는 순간 바로 센다(이전 방식)
+  // 아래 두 조건은 없는 펀치를 더 줄이지만(분당 4.4까지) 실제 펀치도 잃어서(BoxingVI -2~5%p, 높이 든 미트 치기) 기본은 끔
+  straightPreBent: null, // 예: 0.82 — 펴기 직전 0.3초 안에 팔 펴짐이 이 값 이하였던 적이 있어야 펀치
+  straightMaxRise: null, // 예: 0.3 — 손목이 어깨보다 몸통 길이 × 이 값 넘게 위면 펀치 아님
   punchSource: 'rule', //'rule': 스트레이트는 3D 규칙, 훅·어퍼컷은 분류기 / 'classifier': 모든 펀치를 분류기로
 };
 const RETRACT_STRAIGHT = 0.8;
@@ -48,7 +56,7 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
   const role = { [lead]: 'lead', [rear]: 'rear' };
   const slack = GUARD_SLACK[level] ?? 0.2;
 
-  const arm = { l: { ext: false, last: -1e9, retract: -1e9 }, r: { ext: false, last: -1e9, retract: -1e9 } };
+  const arm = { l: { ext: false, last: -1e9, retract: -1e9, hist: [], pending: null }, r: { ext: false, last: -1e9, retract: -1e9, hist: [], pending: null } };
   const hand = { l: { badSince: null, reported: false, worst: 0 }, r: { badSince: null, reported: false, worst: 0 } };
   const leg = { l: { up: false, last: -1e9 }, r: { up: false, last: -1e9 } };
 
@@ -117,19 +125,33 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
       const m = armMetrics(world, sd, T);
       const a = arm[sd];
       const atShoulderHeight = m.wrist.y < shY + 0.35 * T; // 팔을 늘어뜨린 것과 구분
+      // 펴짐 기록(펴기 직전에 팔이 굽어 있었는지 보려고 0.4초만 둔다)
+      a.hist.push([t, m.straight]);
+      while (a.hist.length && t - a.hist[0][0] > 400) a.hist.shift();
+      const countStraight = (at) => {
+        const kind = role[sd] === 'lead' ? 'jab' : 'cross';
+        s.punches[kind]++;
+        events.push({ type: 'punch', kind, hand: role[sd], side: sd, t: at - startT });
+      };
+      // 오래 뻗고 있으면 펀치 아님. 인식이 끊긴 프레임은 시간에 넣지 않는다(회수하는 순간이 안 보였을 수 있어서)
+      if (a.pending != null) { a.pendingAge += dt; if (P.straightHoldMs != null && a.pendingAge > P.straightHoldMs) a.pending = null; }
       if (!a.ext && m.straight > P.straight && m.reach > P.reach && atShoulderHeight && t - a.last > PUNCH_MIN_GAP_MS) {
         a.ext = true;
         a.last = t;
         if (P.punchSource === 'rule') {
-          const kind = role[sd] === 'lead' ? 'jab' : 'cross';
-          s.punches[kind]++;
           straightTimes[sd].push(t);
           if (straightTimes[sd].length > 10) straightTimes[sd].shift();
-          events.push({ type: 'punch', kind, hand: role[sd], side: sd, t: t - startT });
+          const wasBent = P.straightPreBent == null || a.hist.some(([ht, st]) => t - ht <= 300 && st <= P.straightPreBent);
+          const notRaised = P.straightMaxRise == null || (m.shoulder.y - m.wrist.y) / T <= P.straightMaxRise;
+          if (wasBent && notRaised) {
+            if (P.straightHoldMs == null) countStraight(t);
+            else { a.pending = t; a.pendingAge = 0; } // 회수하면 센다
+          }
         }
       } else if (a.ext && (m.straight < RETRACT_STRAIGHT || m.reach < RETRACT_REACH)) {
         a.ext = false;
         a.retract = t;
+        if (a.pending != null) { countStraight(a.pending); a.pending = null; }
       }
       ok[sd] = m.wrist.y < guardLine || a.ext || t - a.retract < RETURN_GRACE_MS;
       below[sd] = m.wrist.y - guardLine;

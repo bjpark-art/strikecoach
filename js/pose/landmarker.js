@@ -3,13 +3,16 @@ const VERSION = '0.10.14';
 const CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${VERSION}`;
 const modelUrl = (size) => `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_${size}/float16/1/pose_landmarker_${size}.task`;
 
+// 추적 기준(minTrackingConfidence). 아래 설명 참고. 검증 도구가 다른 값으로 시험할 수 있게 인자로도 받는다.
+export const TRACKING_CONF = 0.65;
+
 const cache = new Map();          // `${numPoses}:${model}` → Promise<PoseLandmarker>
 const lastTs = new WeakMap();     // landmarker → 마지막 타임스탬프
 const modeOf = new WeakMap();     // landmarker → 'VIDEO' | 'IMAGE'
 
 /** model: 'lite'(앱 기본, 가장 빠름) | 'full' | 'heavy'(가장 정확, 느림) */
-export function getLandmarker({ numPoses = 1, model = 'lite', mode = 'VIDEO' } = {}) {
-  const key = `${numPoses}:${model}:${mode}`;
+export function getLandmarker({ numPoses = 1, model = 'lite', mode = 'VIDEO', tracking = TRACKING_CONF } = {}) {
+  const key = `${numPoses}:${model}:${mode}:${tracking}`;
   const MODEL = modelUrl(model);
   if (!cache.has(key)) {
     const p = (async () => {
@@ -20,8 +23,10 @@ export function getLandmarker({ numPoses = 1, model = 'lite', mode = 'VIDEO' } =
         runningMode: mode, // VIDEO: 프레임 사이 추적·스무딩 / IMAGE: 프레임마다 독립 (검증 실험용)
         numPoses,
         // 기본값(0.5)이면 첫 프레임에서 잘못 잡은 자세를 몇 초씩 계속 따라간다(실제 영상: 첫 분석에서 4.6초 동안
-        // 발목을 허리 높이로 잡아 없는 킥 13개). 0.8이면 추적이 불확실할 때 사람을 다시 찾아 바로 바로잡는다. 속도 차이 없음.
-        minTrackingConfidence: 0.8,
+        // 발목을 허리 높이로 잡아 없는 킥 13개). 높이면 추적이 불확실할 때 사람을 다시 찾아 바로잡는다. 속도 차이 없음.
+        // 0.65 vs 0.8(2026-11-17 검증): 1인은 결과가 같고, 2인(스파링)은 0.8이면 두 사람이 자주 뒤바뀌어 인식이 줄었다
+        // (미트 영상 64% → 39%). 0.65는 2인에서 0.5와 비슷하고 1인의 없는 킥 문제도 고친다.
+        minTrackingConfidence: tracking,
       });
       // GPU(WebGL)를 못 쓰는 PC가 있어서 실패하면 CPU로 다시 만든다.
       try {
