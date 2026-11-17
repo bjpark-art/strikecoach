@@ -37,6 +37,17 @@ export const DEFAULT_TUNE = {
   // 검증(2026-11-17): BoxingVI 42.4 → 49.4%(없는 펀치 137 → 178), Mixkit 20.0 → 45.5%, 직접 단 정답 51.3 → 53.8%,
   // 펀치 없는 영상 분당 3.2 → 3.5
   oneArm: true,
+  // 무릎 치기(실험): 무릎이 엉덩이보다 몸통 × kneeH 위로(음수면 아래까지) 올라가고 다리가 접혀 있고(엉덩이~발목 / 다리 길이 ≤ kneeFold)
+  // 두 손이 가슴 높이 이상(손목이 어깨보다 몸통 × kneeHands 아래 이내)인 구간이 kneeMaxMs 안에 끝나고,
+  // 반대 다리가 kneeAltMs 안에 같은 동작을 안 하면(제자리 뛰기·하이니) 센다. 같은 구간에 킥을 셌으면 무릎은 안 셈
+  // 검증(2026-11-17, 무릎 정답 34개): 켜면 무릎 5.9 → 29.4%, 다리 공격 전체 43.5 → 55.3%, 하지만 새 무릎 감지의 약 절반이 가짜
+  // (펀치·킥 없는 영상 3개, 치는 영상 6개 — 킥 준비·회수 동작). 표본이 적어 기본은 끔. 켜면 화면에 무릎 숫자도 보여줘야 함
+  knee: false,
+  kneeH: 0,
+  kneeFold: 0.8,
+  kneeHands: 0.5,
+  kneeMaxMs: 700,
+  kneeAltMs: 500,
   punchSource: 'rule', //'rule': 스트레이트는 3D 규칙, 훅·어퍼컷은 분류기 / 'classifier': 모든 펀치를 분류기로
 };
 const RETRACT_STRAIGHT = 0.8;
@@ -83,9 +94,10 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
   const arm = { l: { ext: false, last: -1e9, retract: -1e9, hist: [], pending: null }, r: { ext: false, last: -1e9, retract: -1e9, hist: [], pending: null } };
   const hand = { l: { badSince: null, reported: false, worst: 0 }, r: { badSince: null, reported: false, worst: 0 } };
   const leg = { l: { up: false, last: -1e9 }, r: { up: false, last: -1e9 } };
+  const kn = { l: { ep: null, pend: null, lastPeak: -1e9 }, r: { ep: null, pend: null, lastPeak: -1e9 } }; // 무릎 올림 구간·확정 대기
 
   const s = {
-    frames: 0, tracked: 0, partial: 0, upper: 0, guardOk: 0, activeMs: 0,
+    frames: 0, tracked: 0, partial: 0, upper: 0, knees: { lead: 0, rear: 0 }, guardOk: 0, activeMs: 0,
     punches: { jab: 0, cross: 0, hook: 0, uppercut: 0 },
     kicks: { lead: 0, rear: 0 },
     guardDrops: { lead: 0, rear: 0 },
@@ -273,6 +285,37 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
       }
     }
 
+    if (P.knee && fullBody && allVisible(vis, [LM.lKn, LM.rKn], P.coreVis)) {
+      const handsUp = Math.max(world[LM.lWr].y, world[LM.rWr].y) - shY <= P.kneeHands * T;
+      for (const sd of ['l', 'r']) {
+        const hip = world[LM[sd + 'Hip']], knee = world[LM[sd + 'Kn']], ankle = world[LM[sd + 'An']];
+        const kneeH = (hip.y - knee.y) / T;
+        const fold = dist(hip, ankle) / ((dist(hip, knee) + dist(knee, ankle)) || 1);
+        const up = handsUp && kneeH >= P.kneeH && fold <= P.kneeFold;
+        const k = kn[sd];
+        if (up && !k.ep) k.ep = { start: t, peak: t, best: kneeH, kicked: false };
+        else if (up) { if (kneeH > k.ep.best) { k.ep.best = kneeH; k.ep.peak = t; } }
+        if (k.ep && leg[sd].counted && leg[sd].last >= k.ep.start - 100) k.ep.kicked = true; // 같은 구간에 킥을 셈
+        if (!up && k.ep) {
+          const e = k.ep; k.ep = null;
+          if (t - e.start <= P.kneeMaxMs && !e.kicked) k.pend = { peak: e.peak, decide: t + P.kneeAltMs };
+          k.lastPeak = e.peak;
+        }
+      }
+      // 확정: 반대 다리가 비슷한 때 무릎을 올렸으면(번갈아 올리는 동작) 버린다
+      for (const sd of ['l', 'r']) {
+        const k = kn[sd], o = kn[sd === 'l' ? 'r' : 'l'];
+        if (!k.pend) continue;
+        const otherNear = (o.ep && Math.abs(o.ep.peak - k.pend.peak) <= P.kneeAltMs) || Math.abs(o.lastPeak - k.pend.peak) <= P.kneeAltMs;
+        if (otherNear) { k.pend = null; continue; }
+        if (t >= k.pend.decide) {
+          s.knees[role[sd]]++;
+          events.push({ type: 'knee', leg: role[sd], side: sd, t: k.pend.peak - startT });
+          k.pend = null;
+        }
+      }
+    }
+
     if (P.punchSource === 'rule') handleStrikes(strikeOut, events);
 
     s.events.push(...events);
@@ -303,6 +346,8 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
       guardDrops: { ...s.guardDrops },
       totalPunches: s.punches.jab + s.punches.cross + s.punches.hook + s.punches.uppercut,
       totalKicks: s.kicks.lead + s.kicks.rear,
+      knees: { ...s.knees },
+      totalKnees: s.knees.lead + s.knees.rear,
       activeMs: Math.round(s.activeMs),
       events: s.events.slice(),
     };
