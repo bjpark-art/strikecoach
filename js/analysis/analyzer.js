@@ -36,6 +36,10 @@ export const DEFAULT_TUNE = {
   // 한쪽 팔만 보여도(옆모습에서 먼 팔이 가려짐) 양 어깨가 보이면 보이는 팔의 스트레이트·훅·어퍼컷을 센다. 가드·킥은 그 프레임에서 판정 안 함.
   // 검증(2026-11-17): BoxingVI 42.4 → 49.4%(없는 펀치 137 → 178), Mixkit 20.0 → 45.5%, 직접 단 정답 51.3 → 53.8%,
   // 펀치 없는 영상 분당 3.2 → 3.5
+  // 킥을 차는 동안 균형을 잡으려 팔을 휘두르는 동작은 펀치 아님: 펀치 시각 ± kickArmMs 안에 발이 반대쪽 무릎보다 올라가 있었으면 안 셈.
+  // 검증(2026-11-17): 치는 영상의 없는 펀치 27 → 16개(분당 5.1 → 3.0), 실제 펀치 94개 중 1개 잃음(킥 직전 크로스), BoxingVI 그대로.
+  // 다리를 잘못 잡아 없는 킥이 많이 생기는 영상에서는 펀치도 같이 사라진다(추적 기준 0.5 시절 추출에서 확인)
+  kickArmMs: 200,
   oneArm: true,
   // 무릎 치기(실험): 무릎이 엉덩이보다 몸통 × kneeH 위로(음수면 아래까지) 올라가고 다리가 접혀 있고(엉덩이~발목 / 다리 길이 ≤ kneeFold)
   // 두 손이 가슴 높이 이상(손목이 어깨보다 몸통 × kneeHands 아래 이내)인 구간이 kneeMaxMs 안에 끝나고,
@@ -56,6 +60,7 @@ const PUNCH_MIN_GAP_MS = 180;
 const RETURN_GRACE_MS = 350;   // 펀치를 회수하는 동안은 가드 하락으로 보지 않음
 const GUARD_DROP_MS = 400;     // 이만큼 계속 내려가 있어야 오류로 기록
 const KICK_MIN_GAP_MS = 400;
+const KICK_MAX_MS = 1000;
 // 상체 모드: 엉덩이가 안 보이면 몸통 길이 대신 3D 어깨 너비 × 이 비율을 기준 길이로 쓴다.
 export const UPPER_TORSO_RATIO = 1.4;
 export const CURVED_MIN_PROB = DEFAULT_TUNE.curvedProb;
@@ -94,6 +99,8 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
   const arm = { l: { ext: false, last: -1e9, retract: -1e9, hist: [], pending: null }, r: { ext: false, last: -1e9, retract: -1e9, hist: [], pending: null } };
   const hand = { l: { badSince: null, reported: false, worst: 0 }, r: { badSince: null, reported: false, worst: 0 } };
   const leg = { l: { up: false, last: -1e9 }, r: { up: false, last: -1e9 } };
+  const legUps = []; // 발이 반대쪽 무릎보다 올라가 있던 구간 [시작, 끝] (최근 3초)
+  const duringKick = (pt) => P.kickArmMs != null && legUps.some(([a, b]) => a <= pt + P.kickArmMs && (b ?? a + KICK_MAX_MS) >= pt - P.kickArmMs); // 다리가 안 보여 끝을 못 봤으면 최대 1초
   const kn = { l: { ep: null, pend: null, lastPeak: -1e9 }, r: { ep: null, pend: null, lastPeak: -1e9 } }; // 무릎 올림 구간·확정 대기
 
   const s = {
@@ -142,6 +149,7 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
       }
       const recovering = recoverTimes[st.side].some((x) => x >= st.start - 300 && x <= st.end + 100) || hand[st.side].reported;
       if (recovering && P.guardFilter) continue;
+      if (duringKick(st.end) || duringKick(st.start)) continue;
       if (curved && P.curvedMirror) {
         const mm = mirror(st.side, st.start - 200, st.end);
         if (mm && mm.ratio >= P.curvedMirror[0] && mm.corr >= P.curvedMirror[1]) continue;
@@ -195,6 +203,7 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
       a.hist.push([t, m.straight]);
       while (a.hist.length && t - a.hist[0][0] > 400) a.hist.shift();
       const countStraight = (at) => {
+        if (duringKick(at)) return;
         const kind = role[sd] === 'lead' ? 'jab' : 'cross';
         s.punches[kind]++;
         events.push({ type: 'punch', kind, hand: role[sd], side: sd, t: at - startT });
@@ -268,8 +277,12 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
           g.up = true;
           g.counted = false;
           g.last = t;
+          g.iv = [t, null];
+          legUps.push(g.iv);
+          while (legUps.length && t - legUps[0][0] > 3000) legUps.shift();
         } else if (g.up && ankle.y > standingKnee.y + 0.1 * T) {
           g.up = false;
+          if (g.iv) g.iv[1] = t;
         }
         if (g.up && !g.counted) {
           const hip = world[LM[sd + 'Hip']], knee = world[LM[sd + 'Kn']];

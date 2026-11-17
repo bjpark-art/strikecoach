@@ -421,6 +421,21 @@ test('스트레칭: 양팔을 옆으로 벌리거나 머리 위로 뻗으면 세
   eq(run({ l: side(1), r: side(-1) }), { jab: 0, cross: 0 }, '양팔 옆으로(T자)');
   eq(run({ l: up(1), r: up(-1) }), { jab: 0, cross: 0 }, '양팔 머리 위로');
   eq(run({ r: [P(-0.16, -0.5, -0.28), P(-0.14, -0.5, -0.56)] }), { jab: 0, cross: 1 }, '앞으로 친 크로스');
+  // 킥을 차며 팔을 휘두름: 같은 팔 동작이라도 그때 발이 반대쪽 무릎보다 올라가 있으면 세지 않음
+  const runLeg = (liftFoot) => {
+    const an = createAnalyzer({ stance: 'orthodox' });
+    let t = 0;
+    const cross = { r: [P(-0.16, -0.5, -0.28), P(-0.14, -0.5, -0.56)] };
+    const feed = (arms, lift, n) => { for (let k = 0; k < n; k++) {
+      const f = pose(arms);
+      if (lift) { f.world[25] = P(0.1, -0.05, -0.3); f.world[27] = P(0.1, 0.3, -0.5); } // 왼 무릎·발목을 들어 올림
+      an.update({ ...f, t }); t += 50;
+    } };
+    feed({}, false, 10); feed(cross, liftFoot, 4); feed({}, false, 10);
+    return an.summary().punches.cross;
+  };
+  eq(runLeg(false), 1, '발을 딛고 친 크로스');
+  eq(runLeg(true), 0, '발을 든 채 뻗은 팔');
 });
 
 const failed = results.filter((r) => !r[1]);
