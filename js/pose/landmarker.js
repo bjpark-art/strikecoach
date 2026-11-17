@@ -19,6 +19,9 @@ export function getLandmarker({ numPoses = 1, model = 'lite', mode = 'VIDEO' } =
         baseOptions: { modelAssetPath: MODEL, delegate },
         runningMode: mode, // VIDEO: 프레임 사이 추적·스무딩 / IMAGE: 프레임마다 독립 (검증 실험용)
         numPoses,
+        // 기본값(0.5)이면 첫 프레임에서 잘못 잡은 자세를 몇 초씩 계속 따라간다(실제 영상: 첫 분석에서 4.6초 동안
+        // 발목을 허리 높이로 잡아 없는 킥 13개). 0.8이면 추적이 불확실할 때 사람을 다시 찾아 바로 바로잡는다. 속도 차이 없음.
+        minTrackingConfidence: 0.8,
       });
       // GPU(WebGL)를 못 쓰는 PC가 있어서 실패하면 CPU로 다시 만든다.
       try {

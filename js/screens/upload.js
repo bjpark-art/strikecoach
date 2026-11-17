@@ -1,5 +1,5 @@
 import { loadSettings, saveSession } from '../store.js';
-import { analyzeVideo, loadVideo, VideoError } from '../pose/video-analyzer.js';
+import { analyzeVideo, loadVideo, releaseVideo, VideoError } from '../pose/video-analyzer.js';
 import { analyzeFrames, sessionStats } from '../analysis/offline.js';
 import { frameCount } from '../pose/frames.js';
 import { putFrames } from '../db.js';
@@ -33,6 +33,8 @@ export function mount(root, ctx) {
 
       <label class="btn btn-ghost" for="file" id="pickBtn">${icon('upload')}<span>영상 선택</span></label>
       <input type="file" id="file" accept="video/*" hidden>
+      <div class="notice" id="err" hidden></div>
+      <div class="small muted" id="opening" hidden>영상을 여는 중… (긴 영상은 몇 초 걸려요)</div>
 
       <div class="card stack" id="preview" hidden>
         <video id="pv" class="preview-video" controls muted playsinline></video>
@@ -68,7 +70,6 @@ export function mount(root, ctx) {
         <button class="btn btn-ghost" id="cancel">취소</button>
       </div>
 
-      <div class="notice" id="err" hidden></div>
       <div style="flex:1"></div>
       <button class="btn btn-primary" id="start" disabled>${icon('play')}분석 시작</button>
     </div>
@@ -161,6 +162,7 @@ export function mount(root, ctx) {
   function showError(msg) {
     $('#err').hidden = !msg;
     $('#err').textContent = msg || '';
+    if (msg) $('#err').scrollIntoView({ block: 'center', behavior: 'smooth' }); // 휴대폰에서 화면 밖에 뜨지 않게
   }
 
   $('#file').addEventListener('change', async (e) => {
@@ -170,9 +172,10 @@ export function mount(root, ctx) {
     showError(null);
     file = null;
     $('#start').disabled = true;
+    $('#opening').hidden = false;
     try {
       const meta = await loadVideo(f); // 열 수 있는 형식인지 미리 확인
-      meta.video.removeAttribute('src'); meta.video.load(); URL.revokeObjectURL(meta.url);
+      releaseVideo(meta);
       if (!alive) return;
       file = f;
       if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -189,6 +192,8 @@ export function mount(root, ctx) {
       renderRanges();
     } catch (err) {
       showError(err instanceof VideoError ? err.message : `영상을 열지 못했어요. (${err?.message || err})`);
+    } finally {
+      $('#opening').hidden = true;
     }
   });
 
@@ -207,7 +212,11 @@ export function mount(root, ctx) {
     $('#pickBtn').hidden = true;
     $('#tips').hidden = true;
     $('#progress').hidden = false;
-    $('#pv').pause();
+    // 분석하는 동안 미리보기 영상을 재생해서 프레임을 받는다(화면에 보여야 브라우저가 재생을 멈추지 않는다)
+    const pv = $('#pv');
+    pv.pause();
+    pv.controls = false;
+    $('#progress').scrollIntoView({ block: 'center', behavior: 'smooth' });
     showError(null);
     try { wakeLock = await navigator.wakeLock?.request('screen'); } catch (_) {}
 
@@ -217,6 +226,7 @@ export function mount(root, ctx) {
         fps: FPS,
         people,
         ranges: useRanges,
+        videoEl: pv,
         signal: controller.signal,
         onProgress: (p) => {
           if (!alive) return;
@@ -281,6 +291,11 @@ export function mount(root, ctx) {
       $('#mode').hidden = false;
       $('#start').disabled = false;
       $('#rangeField').querySelectorAll('button').forEach((b) => { b.disabled = false; });
+      // 분석이 미리보기 영상을 썼으니 다시 연결
+      pv.controls = true;
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      previewUrl = URL.createObjectURL(file);
+      pv.src = previewUrl;
       if (e?.name === 'AbortError') showError('분석을 취소했어요.');
       else showError(e instanceof VideoError ? e.message : `분석 중 문제가 생겼어요. (${e?.message || e})`);
     } finally {
