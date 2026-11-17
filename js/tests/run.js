@@ -244,6 +244,33 @@ test('추적기: 한 명이 잠깐 안 보여도 같은 자리로 복귀', () =>
   ok(r2.a === f0.a && r2.b === f0.b, 'A/B 복귀');
 });
 
+test('추적기: 한 사람을 두 번 감지해도 상대로 넘어가지 않음', () => {
+  const tr = createTracker();
+  const f0 = demoSparringFrameAt(0);
+  tr.assign([f0.a, f0.b], 0);
+  // B가 화면 밖으로 나가고, MediaPipe가 A를 살짝 어긋나게 두 번 감지
+  const dup = { image: f0.a.image.map((p) => p && { ...p, x: p.x + 0.004 }), world: f0.a.world };
+  for (let i = 1; i <= 20; i++) {
+    const r = tr.assign(i % 3 ? [f0.a, dup] : [dup, f0.a], i * 50);
+    ok(r.a && !r.b, `프레임 ${i}: A 하나로 합쳐야 함`);
+  }
+});
+
+test('추적기: 한 사람이 상대 뒤에 가려졌다 나와도 나/상대가 안 바뀜', () => {
+  const tr = createTracker();
+  const f0 = demoSparringFrameAt(0);
+  const shift = (d, dx) => ({ image: d.image.map((p) => p && { ...p, x: p.x + dx }), world: d.world });
+  let t = 0;
+  tr.assign([f0.a, f0.b], t);
+  // A가 오른쪽으로 걸어가 B 뒤로 들어감(0.6초 동안 B만 보임), 그동안 B는 왼쪽으로 조금 움직임 → A가 B 오른쪽으로 빠져나옴(서로 자리가 바뀜)
+  for (let i = 1; i <= 8; i++) { t += 50; tr.assign([shift(f0.a, i * 0.02), f0.b], t); }
+  for (let i = 1; i <= 12; i++) { t += 50; const r = tr.assign([shift(f0.b, -i * 0.01)], t); ok(r.b && !r.a, `가려진 동안 ${i}: 보이는 사람은 B`); }
+  t += 50;
+  const bNow = shift(f0.b, -0.12), aNow = shift(f0.a, 0.32);
+  const r = tr.assign([bNow, aNow], t);
+  ok(r.a === aNow && r.b === bNow, '다시 나타난 뒤에도 A는 A, B는 B');
+});
+
 test('두 사람 바꾸기: 지정한 프레임부터만 바뀜', () => {
   const d = sparBuffers(1);
   const before = unpackFrame(d.a, 0).image[11].x;

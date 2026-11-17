@@ -111,7 +111,7 @@ export async function analyzeVideo(file, { fps = 20, people = 1, ranges = null, 
     const take = (t) => {
       const dets = detectAll(landmarker, video, base + t * 1000);
       if (people === 2) {
-        const r = tracker.assign(dets);
+        const r = tracker.assign(dets, t * 1000);
         pa.push({ t: t * 1000, image: r.a?.image, world: r.a?.world });
         pb.push({ t: t * 1000, image: r.b?.image, world: r.b?.world });
         overlap.push(r.overlap ? 1 : 0);
