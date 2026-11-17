@@ -134,7 +134,9 @@ export function mount(root, ctx) {
     let hot = null;
     if (phase === 'work' && !paused) {
       const r = analyzer.update(f);
-      if (!r.tracked) {
+      if (r.partial) {
+        lostSince = null; // 한쪽 팔만 보임: 펀치는 세고 있으니 "안 보여요" 안내는 하지 않음(가드 큐도 없음)
+      } else if (!r.tracked) {
         lostSince ??= f.t;
         if (f.t - lostSince > 2000) { const c = cues.onLost(f.t); if (c) showCue(c); }
       } else {

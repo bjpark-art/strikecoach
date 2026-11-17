@@ -33,6 +33,10 @@ export const DEFAULT_TUNE = {
   straightBothRaised: 0.3,
   // - 훅·어퍼컷: 양팔이 함께 움직이면 아님. [반대 팔 이동 / 친 팔 이동 최소, 두 손목 세로 속도 상관 최소] (구간 시작 0.2초 전~끝)
   curvedMirror: [0.8, 0.85],
+  // 한쪽 팔만 보여도(옆모습에서 먼 팔이 가려짐) 양 어깨가 보이면 보이는 팔의 스트레이트·훅·어퍼컷을 센다. 가드·킥은 그 프레임에서 판정 안 함.
+  // 검증(2026-11-17): BoxingVI 42.4 → 49.4%(없는 펀치 137 → 178), Mixkit 20.0 → 45.5%, 직접 단 정답 51.3 → 53.8%,
+  // 펀치 없는 영상 분당 3.2 → 3.5
+  oneArm: true,
   punchSource: 'rule', //'rule': 스트레이트는 3D 규칙, 훅·어퍼컷은 분류기 / 'classifier': 모든 펀치를 분류기로
 };
 const RETRACT_STRAIGHT = 0.8;
@@ -46,7 +50,7 @@ export const UPPER_TORSO_RATIO = 1.4;
 export const CURVED_MIN_PROB = DEFAULT_TUNE.curvedProb;
 const STRAIGHT_OVERLAP_MS = 150;
 
-const CORE = [LM.lSh, LM.rSh, LM.lEl, LM.rEl, LM.lWr, LM.rWr];
+const ARM = { l: [LM.lSh, LM.lEl, LM.lWr], r: [LM.rSh, LM.rEl, LM.rWr] };
 const HIPS = [LM.lHip, LM.rHip];
 const LEGS = [LM.lKn, LM.rKn, LM.lAn, LM.rAn];
 
@@ -81,7 +85,7 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
   const leg = { l: { up: false, last: -1e9 }, r: { up: false, last: -1e9 } };
 
   const s = {
-    frames: 0, tracked: 0, upper: 0, guardOk: 0, activeMs: 0,
+    frames: 0, tracked: 0, partial: 0, upper: 0, guardOk: 0, activeMs: 0,
     punches: { jab: 0, cross: 0, hook: 0, uppercut: 0 },
     kicks: { lead: 0, rear: 0 },
     guardDrops: { lead: 0, rear: 0 },
@@ -147,15 +151,19 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
     // 2D 타격 구간은 양팔이 다 안 보이는 프레임에서도 계속 따라간다(분류기 모드에선 이때도 센다).
     const strikeOut = strikes ? strikes.update(t, image) : [];
     const vis = image || world;
-    if (!world || !vis || !allVisible(vis, CORE, P.coreVis)) {
+    const armVis = vis && { l: allVisible(vis, ARM.l, P.coreVis), r: allVisible(vis, ARM.r, P.coreVis) };
+    const full = !!world && !!vis && armVis.l && armVis.r;
+    // 한쪽 팔만 보임(옆모습에서 먼 팔이 가려짐): 양 어깨가 보이면 보이는 팔의 스트레이트·훅은 센다. 가드·킥은 판정하지 않는다
+    const partial = !full && P.oneArm && !!world && !!vis && (armVis.l || armVis.r) && allVisible(vis, [LM.lSh, LM.rSh], P.coreVis);
+    if (!full && !partial) {
       const events = [];
       if (P.punchSource === 'classifier') { handleStrikes(strikeOut, events); s.events.push(...events); }
       return { tracked: false, events, guardOk: null, hot: null, mode: null };
     }
-    s.tracked++;
+    if (full) s.tracked++; else s.partial++;
 
     const fullBody = allVisible(vis, HIPS);
-    if (!fullBody) s.upper++;
+    if (full && !fullBody) s.upper++;
     const T = (fullBody ? torso(world) : dist(world[LM.lSh], world[LM.rSh]) * UPPER_TORSO_RATIO) || 0.5;
     const events = [];
     const shY = (world[LM.lSh].y + world[LM.rSh].y) / 2;
@@ -167,6 +175,7 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
     const below = {}; // 손목이 가드 라인보다 얼마나 아래인지(미터, +면 아래)
 
     for (const sd of ['l', 'r']) {
+      if (!armVis[sd]) continue;
       const m = armMetrics(world, sd, T);
       const a = arm[sd];
       const atShoulderHeight = m.wrist.y < shY + 0.35 * T; // 팔을 늘어뜨린 것과 구분
@@ -203,6 +212,12 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
       }
       ok[sd] = m.wrist.y < guardLine || a.ext || t - a.retract < RETURN_GRACE_MS;
       below[sd] = m.wrist.y - guardLine;
+    }
+
+    if (!full) {
+      if (P.punchSource === 'rule') handleStrikes(strikeOut.filter((st) => armVis[st.side]), events);
+      s.events.push(...events);
+      return { tracked: false, partial: true, events, guardOk: null, hot: null, mode: null };
     }
 
     let hot = null;

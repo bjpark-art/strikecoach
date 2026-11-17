@@ -77,6 +77,25 @@ test('관절이 안 보이면 분석하지 않음', () => {
   eq(s.guardPct, null, '가드 유지율');
 });
 
+test('한쪽 팔만 보이면: 그 팔의 펀치는 세고, 가드·인식률에는 넣지 않음', () => {
+  const run = (oneArm) => {
+    const an = createAnalyzer({ tune: { oneArm } });
+    let partial = false;
+    for (let i = 0; i <= (DEMO_LOOP_SEC - 0.05) * 30; i++) {
+      const f = demoFrameAt(i / 30);
+      [14, 16].forEach((j) => { f.image[j] = { ...f.image[j], visibility: 0.05 }; }); // 오른팔(뒷손) 팔꿈치·손목 가려짐
+      partial = an.update(f).partial || partial;
+    }
+    return { s: an.summary(), partial };
+  };
+  const on = run(true), off = run(false);
+  eq(jc(on.s.punches), { jab: 4, cross: 0 }, '보이는 앞손 잽만');
+  ok(on.partial, 'partial 표시');
+  eq(on.s.trackedPct, 0, '인식률(양팔 다 보인 프레임)');
+  eq(on.s.guardPct, null, '가드 유지율');
+  eq(off.s.totalPunches, 0, '끄면 예전처럼 세지 않음');
+});
+
 test('팔을 아래로 늘어뜨린 자세는 펀치가 아니고 가드 하락', () => {
   const an = createAnalyzer();
   let drops = 0;
