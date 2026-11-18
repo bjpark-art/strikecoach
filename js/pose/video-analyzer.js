@@ -5,9 +5,13 @@
 //  - 이동 방식(예비): 정해진 시각으로 한 프레임씩 이동. 재생 방식을 못 쓰는 브라우저에서만.
 import { getLandmarker, detectAll, nextTimestampBase } from './landmarker.js';
 import { createPacker } from './frames.js';
-import { createTracker } from '../sparring/tracker.js';
+import { createSoloTracker, identifyViterbi, overlapFlags, plausibleBody } from '../sparring/tracker.js';
+import { frameSampler } from './appearance.js';
 
 export class VideoError extends Error {}
+
+// 혼자 훈련: 두 사람 모드로 화면 속 사람들을 확인하는 간격(프레임). 초당 20장이면 0.25초마다
+export const SCOUT_EVERY = 5;
 
 const FORMAT_MSG = '이 영상을 열지 못했어요. iPhone이라면 설정 > 카메라 > 포맷에서 "높은 호환성"으로 찍거나, MP4(H.264)로 저장해 주세요.';
 
@@ -100,23 +104,38 @@ export async function analyzeVideo(file, { fps = 20, people = 1, ranges = null, 
   const { video, duration, aspect } = meta;
   try {
     const landmarker = await getLandmarker({ numPoses: people });
+    // 혼자 훈련: 뼈대는 한 사람 모드(가장 정확)에서 받고, 0.25초마다 두 사람 모드로 화면 속 사람들을 확인해
+    // 한 사람 모드가 다른 사람(지나가는 사람·코치·관중)으로 넘어가면 그 뼈대를 버리고 나를 따라간다.
+    // (두 사람 모드 뼈대는 덜 정확해서 — 펀치 감지 46% → 37% — 나를 놓쳤을 때만 쓴다)
+    const scout = people === 1 ? await getLandmarker({ numPoses: 2 }) : null;
     const pa = createPacker(Math.ceil(duration * fps) + 1), pb = people === 2 ? createPacker(Math.ceil(duration * fps) + 1) : null;
     const overlap = [];
-    const tracker = people === 2 ? createTracker() : null;
-    const base = nextTimestampBase(landmarker);
+    const tracker = people === 2 ? null : createSoloTracker();
+    // 스파링: 프레임마다 정하지 않고 감지를 모아 두었다가 영상을 다 본 뒤 움직임·생김새로 나/상대를 정한다(identifyViterbi)
+    const sparDets = [], sparT = [];
+    const base = nextTimestampBase(landmarker), scoutBase = scout ? nextTimestampBase(scout) : 0;
+    let frameNo = 0;
     const segs = ranges?.length ? ranges.map(([a, b]) => [Math.max(0, a), Math.min(duration, b)]) : [[0, duration]];
     const total = segs.reduce((s, [a, b]) => s + (b - a), 0) || 1;
     let doneSec = 0;
 
     const take = (t) => {
       const dets = detectAll(landmarker, video, base + t * 1000);
+      if (people === 1) {
+        if (dets[0]) dets[0].primary = true;
+        if (frameNo++ % SCOUT_EVERY === 0) dets.push(...detectAll(scout, video, scoutBase + t * 1000));
+      }
+      if (dets.length) {
+        const sample = frameSampler(video); // 옷 색으로 사람을 구분(겹침·가려짐·장면 전환 뒤에도)
+        for (const d of dets) d.app = sample(d.image);
+      }
       if (people === 2) {
-        const r = tracker.assign(dets, t * 1000);
-        pa.push({ t: t * 1000, image: r.a?.image, world: r.a?.world });
-        pb.push({ t: t * 1000, image: r.b?.image, world: r.b?.world });
-        overlap.push(r.overlap ? 1 : 0);
+        // 사람 몸으로 말이 안 되는 뼈대(붙은 두 사람을 섞은 뼈대, 누운 막대 등)와 앉아 있는 사람(관중)은 버린다
+        sparDets.push(dets.filter((d) => plausibleBody(d.image, aspect, { standing: true })));
+        sparT.push(t * 1000);
       } else {
-        pa.push({ t: t * 1000, image: dets[0]?.image, world: dets[0]?.world });
+        const me = tracker.assign(dets, t * 1000);
+        pa.push({ t: t * 1000, image: me?.image, world: me?.world });
       }
     };
     const aborted = () => { if (signal?.aborted) throw new DOMException('분석을 취소했어요', 'AbortError'); };
@@ -149,6 +168,14 @@ export async function analyzeVideo(file, { fps = 20, people = 1, ranges = null, 
     aborted();
     onProgress?.(1);
     const common = { fps, duration, aspect, method: [...used].join('+') };
+    if (people === 2) {
+      const out = identifyViterbi(sparDets);
+      out.forEach((r, i) => {
+        pa.push({ t: sparT[i], image: r.a?.image, world: r.a?.world });
+        pb.push({ t: sparT[i], image: r.b?.image, world: r.b?.world });
+      });
+      overlap.push(...overlapFlags(out));
+    }
     return people === 2
       ? { ...common, a: pa.finish(), b: pb.finish(), overlap: Uint8Array.from(overlap) }
       : { ...common, frames: pa.finish() };

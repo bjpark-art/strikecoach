@@ -1,5 +1,7 @@
 // 전면 카메라 + MediaPipe Pose Landmarker(온디바이스, 브라우저 WASM/GPU).
-import { getLandmarker, detect } from './landmarker.js';
+import { getLandmarker, detectAll } from './landmarker.js';
+import { createSoloTracker } from '../sparring/tracker.js';
+import { frameSampler } from './appearance.js';
 
 export class CameraError extends Error {}
 
@@ -60,9 +62,11 @@ export async function createCameraSource({ deviceId = null } = {}) {
   video.srcObject = stream;
   await video.play();
 
-  let landmarker;
+  let landmarker, scout;
   try {
     landmarker = await getLandmarker();
+    // 0.2초쯤마다 두 사람 모드로 화면 속 사람들을 확인 → 뒤에 다른 사람이 지나가도 뼈대가 그 사람으로 넘어가지 않게
+    scout = await getLandmarker({ numPoses: 2 });
   } catch (e) {
     console.error('자세 인식 모델 로드 실패', e);
     stream.getTracks().forEach((tr) => tr.stop());
@@ -70,13 +74,18 @@ export async function createCameraSource({ deviceId = null } = {}) {
   }
 
   let handler = null, running = false, raf = 0, lastVideoTime = -1;
+  let tracker = createSoloTracker(), frameNo = 0;
   const loop = () => {
     if (!running) return;
     if (handler && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
       lastVideoTime = video.currentTime;
       const now = performance.now();
-      const { image, world } = detect(landmarker, video, now);
-      handler({ t: now, image, world });
+      const dets = detectAll(landmarker, video, now);
+      if (dets[0]) dets[0].primary = true;
+      if (frameNo++ % 6 === 0) dets.push(...detectAll(scout, video, now));
+      if (dets.length) { const sample = frameSampler(video); for (const d of dets) d.app = sample(d.image); }
+      const me = tracker.assign(dets, now);
+      handler({ t: now, image: me?.image || null, world: me?.world || null });
     }
     raf = requestAnimationFrame(loop);
   };
@@ -90,6 +99,7 @@ export async function createCameraSource({ deviceId = null } = {}) {
     get aspect() { return video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9; },
     listen(fn) {
       handler = fn;
+      tracker = createSoloTracker(); // 새로 들을 때(새 세션)마다 다시 나를 찾는다
       if (!running) { running = true; loop(); }
     },
     stop() {

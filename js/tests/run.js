@@ -5,7 +5,7 @@ import { framingStatus } from '../ui/skeleton.js';
 import { createPacker, unpackFrame, frameCount, findFrame, PACK_JOINTS } from '../pose/frames.js';
 import { analyzeFrames, guardDropIntervals } from '../analysis/offline.js';
 import { demoSparringFrameAt } from '../pose/demo-source.js';
-import { createTracker, swapFrom } from '../sparring/tracker.js';
+import { createTracker, swapFrom, createSoloTracker, identifyViterbi, plausibleBody } from '../sparring/tracker.js';
 import { inferStance, detectHits, pressure } from '../sparring/interaction.js';
 import { scoreRounds, splitRounds } from '../sparring/judge.js';
 import { analyzeSparring } from '../sparring/analyze.js';
@@ -463,6 +463,77 @@ test('스트레칭: 양팔을 옆으로 벌리거나 머리 위로 뻗으면 세
   };
   eq(runLeg(false), 1, '발을 딛고 친 크로스');
   eq(runLeg(true), 0, '발을 든 채 뻗은 팔');
+});
+
+
+// ---------- 혼자 훈련: 다른 사람이 화면에 들어와도 뼈대가 넘어가지 않음 ----------
+function movedPerson(det, dx, scale = 1, cx = 0.5) {
+  return { image: det.image.map((p) => p && { ...p, x: cx + (p.x - cx) * scale + dx, y: 0.5 + (p.y - 0.5) * scale }), world: det.world };
+}
+test('혼자 훈련: 처음엔 한 사람 모드가 고른 사람을 나로, 두 사람 모드 뼈대만 있으면 비워 둠(덜 정확해서)', () => {
+  const me = demoFrameAt(0, 'orthodox');
+  const meC = movedPerson(me, 0.5 - me.image[11].x);
+  const passer = movedPerson(me, 0.3, 0.6);
+  eq(createSoloTracker().assign([passer, meC], 0), null, '한 사람 모드 뼈대 없음');
+  eq(createSoloTracker().assign([meC, { ...passer, primary: true }], 0).image, passer.image, 'primary');
+});
+test('혼자 훈련: 한 사람 모드가 지나가는 사람으로 넘어가도 나를 따라감', () => {
+  const tr = createSoloTracker();
+  const base = demoFrameAt(0, 'orthodox');
+  const me = movedPerson(base, 0.3 - base.image[11].x);
+  const other = movedPerson(base, 0.75 - base.image[11].x, 0.9, 0.75);
+  let t = 0;
+  for (let i = 0; i < 10; i++, t += 50) eq(tr.assign([{ ...me, primary: true }], t)?.image, me.image, '처음엔 나 혼자');
+  // 다른 사람이 들어옴. 한 사람 모드는 그 사람을 잡고(primary), 두 사람 모드는 5프레임마다 둘 다 찾음
+  for (let i = 0; i < 40; i++, t += 50) {
+    const dets = [{ ...other, primary: true }];
+    if (i % 5 === 0) dets.push(me, other);
+    const r = tr.assign(dets, t);
+    ok(!r || r.image === me.image, `${i}번째: 다른 사람을 나로 잡지 않음`);
+    if (i % 5 === 0) eq(r?.image, me.image, `${i}번째: 두 사람 모드의 나`);
+  }
+  eq(tr.assign([{ ...me, primary: true }], t)?.image, me.image, '다시 나');
+});
+test('혼자 훈련: 나 혼자면 같은 사람을 두 번 잡아도 매 프레임 나', () => {
+  const tr = createSoloTracker();
+  const base = demoFrameAt(0, 'orthodox');
+  for (let i = 0; i < 40; i++) {
+    const f = demoFrameAt(i / 20, 'orthodox');
+    const dets = [{ ...f, primary: true }];
+    if (i % 5 === 0) dets.push(movedPerson(f, 0.003), movedPerson(f, 0.2, 0.5)); // 두 사람 모드: 나 + 뒤의 작은 그림자
+    ok(tr.assign(dets, i * 50)?.primary, `${i}번째: 한 사람 모드 뼈대를 씀`);
+  }
+});
+
+// ---------- 스파링: 영상 전체를 보고 생김새로 나/상대 정하기 ----------
+test('스파링: 둘 다 검은 옷이어도 정강이(맨살/보호대)로 자리가 바뀐 뒤에도 나/상대 유지', () => {
+  const app = (skin, j) => ({ top: [0.02 + j, 0.02, 0.02], bottom: [0.02, 0.02 + j, 0.02], shin: skin ? [0.6, 0.45, 0.4] : [0.08, 0.08, 0.08], skin: [skin ? 0.9 : 0.05, 0.1, 0.1] });
+  const dets = [];
+  const n = 120;
+  for (let i = 0; i < n; i++) {
+    const f = demoSparringFrameAt(i / 20);
+    const cut = Math.floor(i / 30) % 2 === 1; // 1.5초마다 카메라가 돌아 둘의 화면 자리가 서로 바뀜
+    const j = () => (((i * 7919 + 13) % 101) / 101 - 0.5) * 0.01; // 옷 색 잡음(매번 같게)
+    const pa = { ...f.a, app: app(false, j()) }, pb = { ...f.b, app: app(true, j()) }; // a: 보호대, b: 맨다리
+    let d = cut ? [{ ...pa, image: f.b.image }, { ...pb, image: f.a.image }] : [pa, pb];
+    if (i % 7 === 3) d = [d[0]]; // 가끔 한 사람만 감지
+    if (i % 2) d.reverse();
+    dets.push(d);
+  }
+  const out = identifyViterbi(dets);
+  let same = 0, both = 0;
+  out.forEach((o) => { if (o.a && o.b) { both++; if ((o.a.app.skin[0] < 0.5) === (out.find((x) => x.a && x.b).a.app.skin[0] < 0.5)) same++; } });
+  ok(same >= both * 0.97, `둘 다 보이는 프레임에서 A가 같은 사람 ${same}/${both} (장면이 바뀌는 순간 한 프레임은 늦을 수 있음)`);
+});
+test('스파링: 섞인 뼈대(몸통이 누움·팔이 몸통의 두 배 넘게 뻗음)는 버림', () => {
+  const f = demoSparringFrameAt(0);
+  ok(plausibleBody(f.a.image, 16 / 9) && plausibleBody(f.b.image, 16 / 9), '정상 뼈대는 남김');
+  const lying = f.a.image.map((p) => p && { ...p });
+  lying[23] = { ...lying[11], x: lying[11].x + 0.15, y: lying[11].y + 0.005 }; lying[24] = { ...lying[12], x: lying[12].x + 0.15, y: lying[12].y + 0.005 };
+  ok(!plausibleBody(lying, 16 / 9), '누운 몸통은 버림');
+  const reach = f.a.image.map((p) => p && { ...p });
+  reach[15] = { ...reach[15], x: reach[13].x + 0.6 };
+  ok(!plausibleBody(reach, 16 / 9), '다른 사람까지 뻗은 팔은 버림');
 });
 
 const failed = results.filter((r) => !r[1]);
