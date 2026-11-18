@@ -30,7 +30,8 @@ export function mount(root, ctx) {
   const g = s.guardPct ?? 0;
   const C = 2 * Math.PI * 40;
   const errs = topErrors(s);
-  const tech = [['잽', s.punches.jab, false], ['크로스', s.punches.cross, false], ['훅', s.punches.hook || 0, false], ['어퍼컷', s.punches.uppercut || 0, false], ['앞발 킥', s.kicks.lead, true], ['뒷발 킥', s.kicks.rear, true]];
+  const tech = [['잽', s.punches.jab, false], ['크로스', s.punches.cross, false], ['훅', s.punches.hook || 0, false], ['어퍼컷', s.punches.uppercut || 0, false], ['앞발 킥', s.kicks.lead, 'kick'], ['뒷발 킥', s.kicks.rear, 'kick'],
+    ...(s.knees ? [['앞 무릎', s.knees.lead, 'knee'], ['뒷 무릎', s.knees.rear, 'knee']] : [])];
   const max = Math.max(1, ...tech.map((t) => t[1]));
   // 구간을 골라 분석한 영상은 이벤트 시각이 영상 속 시각이라, 막대 끝을 영상 길이로 둔다.
   const stripSec = s.ranges?.length ? s.videoDurationSec : s.durationSec;
@@ -53,6 +54,7 @@ export function mount(root, ctx) {
           <div class="kpis">
             <div><div class="num">${s.totalPunches}</div><div class="small muted">펀치</div></div>
             <div><div class="num">${s.totalKicks}</div><div class="small muted">킥</div></div>
+            ${s.totalKnees != null ? `<div><div class="num">${s.totalKnees}</div><div class="small muted">무릎</div></div>` : ''}
             <div><div class="num">${fmtTime(s.durationSec)}</div><div class="small muted">분석 시간</div></div>
           </div>
           ${s.ranges?.length ? `<div class="small muted" style="margin-top:6px">고른 구간 ${s.ranges.length}개만 분석 (${s.ranges.map(([a, b]) => `${fmtTime(a)}–${fmtTime(b)}`).join(', ')})</div>` : ''}
@@ -80,7 +82,7 @@ export function mount(root, ctx) {
       <div class="card">
         <div class="row" style="margin-bottom:10px"><b class="grow">기술별 횟수</b></div>
         <div class="bars">
-          ${tech.map(([n, v, k]) => `<div class="bar"><span>${n}</span><div class="track"><div class="fill ${k ? 'kick' : ''}" style="width:${v / max * 100}%"></div></div><span class="num" style="text-align:right">${v}</span></div>`).join('')}
+          ${tech.map(([n, v, k]) => `<div class="bar"><span>${n}</span><div class="track"><div class="fill ${k || ''}" style="width:${v / max * 100}%"></div></div><span class="num" style="text-align:right">${v}</span></div>`).join('')}
         </div>
         <div class="notice" style="margin-top:12px">훅·어퍼컷은 손목 움직임으로 추정해요(공개 데이터로 학습, 처음 보는 영상 기준 약 72% 정확도). 확신이 낮은 동작은 세지 않아요.</div>
         ${s.upperPct > 30 ? `<div class="notice" style="margin-top:8px">${s.upperPct}% 구간은 상체만 보여서 킥을 세지 않았고, 펀치·가드도 전신일 때보다 덜 정확할 수 있어요.</div>` : ''}

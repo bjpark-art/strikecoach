@@ -45,13 +45,22 @@ export const DEFAULT_TUNE = {
   // 두 손이 가슴 높이 이상(손목이 어깨보다 몸통 × kneeHands 아래 이내)인 구간이 kneeMaxMs 안에 끝나고,
   // 반대 다리가 kneeAltMs 안에 같은 동작을 안 하면(제자리 뛰기·하이니) 센다. 같은 구간에 킥을 셌으면 무릎은 안 셈
   // 검증(2026-11-17, 무릎 정답 34개): 켜면 무릎 5.9 → 29.4%, 다리 공격 전체 43.5 → 55.3%, 하지만 새 무릎 감지의 약 절반이 가짜
-  // (펀치·킥 없는 영상 3개, 치는 영상 6개 — 킥 준비·회수 동작). 표본이 적어 기본은 끔. 켜면 화면에 무릎 숫자도 보여줘야 함
-  knee: false,
+  // (펀치·킥 없는 영상 3개, 치는 영상 6개 — 킥 준비·회수 동작). 표본이 적어 그때는 끔.
+  // 2026-11-18: 무릎 영상을 더 모아(무릎 정답 38개) 기준값을 정할 때 안 본 새 영상에서 무릎 7개 중 6개를 셈 → 기본으로 켬.
+  // 무릎 센 비율 13.2 → 44.7%, 없는 무릎은 펀치·킥 없는 영상 536초에 3개, 치는 영상 7개
+  knee: true,
   kneeH: 0,
   kneeFold: 0.8,
   kneeHands: 0.5,
   kneeMaxMs: 700,
   kneeAltMs: 500,
+  // 한쪽 팔만 보이는 프레임에서도 킥·무릎을 판정(실험, 기본 끔). 2026-11-18: 다리 공격 센 비율 46 → 56%지만
+  // 펀치·킥 없는 영상의 없는 킥 25 → 42개(춤·스트레칭)라 끔
+  legsPartial: false,
+  // 한 킥을 두 다리 킥으로 두 번 세지 않음: 반대 다리 킥을 이 시간(ms) 안에 셌으면 안 셈. 옆모습에서 MediaPipe가 왼·오른 다리를 바꿔 잡아
+  // 차는 순간 두 다리가 다 올라간 것처럼 보임. 검증(2026-11-18, 추적 0.65 추출): 치는 영상의 없는 킥 27 → 13개, 펀치·킥 없는 영상 27 → 24개,
+  // 다리 공격 센 비율 47.2 → 44.4%(108개 중 3개 잃음). 예전 추출 기준: 없는 킥 14 → 4, 48 → 30, 센 비율 그대로
+  kickOneLegMs: 500,
   punchSource: 'rule', //'rule': 스트레이트는 3D 규칙, 훅·어퍼컷은 분류기 / 'classifier': 모든 펀치를 분류기로
 };
 const RETRACT_STRAIGHT = 0.8;
@@ -99,6 +108,7 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
   const arm = { l: { ext: false, last: -1e9, retract: -1e9, hist: [], pending: null }, r: { ext: false, last: -1e9, retract: -1e9, hist: [], pending: null } };
   const hand = { l: { badSince: null, reported: false, worst: 0 }, r: { badSince: null, reported: false, worst: 0 } };
   const leg = { l: { up: false, last: -1e9 }, r: { up: false, last: -1e9 } };
+  let lastKickAt = -1e9; // 마지막으로 킥 조건을 채운 시각(센 것·안 센 것 모두)
   const legUps = []; // 발이 반대쪽 무릎보다 올라가 있던 구간 [시작, 끝] (최근 3초)
   const duringKick = (pt) => P.kickArmMs != null && legUps.some(([a, b]) => a <= pt + P.kickArmMs && (b ?? a + KICK_MAX_MS) >= pt - P.kickArmMs); // 다리가 안 보여 끝을 못 봤으면 최대 1초
   const kn = { l: { ep: null, pend: null, lastPeak: -1e9 }, r: { ep: null, pend: null, lastPeak: -1e9 } }; // 무릎 올림 구간·확정 대기
@@ -236,6 +246,7 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
     }
 
     if (!full) {
+      if (P.legsPartial) judgeLegs(t, world, vis, T, shY, fullBody, armVis, events);
       if (P.punchSource === 'rule') handleStrikes(strikeOut.filter((st) => armVis[st.side]), events);
       s.events.push(...events);
       return { tracked: false, partial: true, events, guardOk: null, hot: null, mode: null };
@@ -267,6 +278,17 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
     const guardOk = ok.l && ok.r;
     if (guardOk) s.guardOk++;
 
+    judgeLegs(t, world, vis, T, shY, fullBody, armVis, events);
+
+    if (P.punchSource === 'rule') handleStrikes(strikeOut, events);
+
+    s.events.push(...events);
+    return { tracked: true, events, guardOk, hot, mode: fullBody ? 'full' : 'upper' };
+  }
+
+  // 킥·무릎 판정. 양팔이 다 보이는 프레임과(legsPartial이면) 한쪽 팔만 보이는 프레임에서 부른다.
+  // 무릎의 "두 손이 가슴 높이 이상" 조건은 보이는 손만 본다
+  function judgeLegs(t, world, vis, T, shY, fullBody, armVis, events) {
     if (allVisible(vis, LEGS, 0.4)) {
       for (const sd of ['l', 'r']) {
         const other = sd === 'l' ? 'r' : 'l';
@@ -291,15 +313,21 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
           const ankleH = (hip.y - ankle.y) / T;
           if (ext >= P.kickExt || ankleH >= P.kickAnkle) {
             g.counted = true;
-            s.kicks[role[sd]]++;
-            events.push({ type: 'kick', leg: role[sd], side: sd, t: t - startT });
+            // 두 다리로 동시에 찰 수는 없다: 반대 다리 킥을 kickOneLegMs 안에 셌으면 같은 킥(옆모습에서 왼·오른 다리가 뒤바뀜)
+            // (뒤바뀐 뼈대가 돌아오며 같은 다리가 다시 올라간 것처럼 보이는 경우도 있어 어느 다리든 직전 킥 판정 시각과 비교)
+            const prev = lastKickAt; lastKickAt = t;
+            if (P.kickOneLegMs == null || t - prev > P.kickOneLegMs) {
+              s.kicks[role[sd]]++;
+              events.push({ type: 'kick', leg: role[sd], side: sd, t: t - startT });
+            }
           }
         }
       }
     }
 
     if (P.knee && fullBody && allVisible(vis, [LM.lKn, LM.rKn], P.coreVis)) {
-      const handsUp = Math.max(world[LM.lWr].y, world[LM.rWr].y) - shY <= P.kneeHands * T;
+      const wy = ['l', 'r'].filter((sd) => armVis[sd]).map((sd) => world[LM[sd + 'Wr']].y);
+      const handsUp = wy.length > 0 && Math.max(...wy) - shY <= P.kneeHands * T;
       for (const sd of ['l', 'r']) {
         const hip = world[LM[sd + 'Hip']], knee = world[LM[sd + 'Kn']], ankle = world[LM[sd + 'An']];
         const kneeH = (hip.y - knee.y) / T;
@@ -328,11 +356,6 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
         }
       }
     }
-
-    if (P.punchSource === 'rule') handleStrikes(strikeOut, events);
-
-    s.events.push(...events);
-    return { tracked: true, events, guardOk, hot, mode: fullBody ? 'full' : 'upper' };
   }
 
   // 일시정지·휴식 뒤 재개할 때 시간 간격을 활동 시간에 넣지 않도록.
@@ -344,6 +367,7 @@ export function createAnalyzer({ stance = 'orthodox', level = 'beginner', curved
       guardPct: s.tracked ? Math.round((s.guardOk / s.tracked) * 100) : null,
       totalPunches: s.punches.jab + s.punches.cross + s.punches.hook + s.punches.uppercut,
       totalKicks: s.kicks.lead + s.kicks.rear,
+      totalKnees: s.knees.lead + s.knees.rear,
     };
   }
 

@@ -389,6 +389,52 @@ test('분석 구간: origin 0이면 이벤트 시각이 영상 속 시각', () =
   eq(run(60, null).map((e) => Math.round(e.t)), base.map((e) => Math.round(e.t)), '기준 없으면 첫 프레임 기준(실시간 훈련)');
 });
 
+test('킥: 차는 순간 왼·오른 다리가 뒤바뀌어 잡혀도(옆모습) 한 번만 센다', () => {
+  const SWAP = [[23, 24], [25, 26], [27, 28], [29, 30], [31, 32]];
+  const swapLegs = (lms) => { const o = lms.slice(); for (const [a, b] of SWAP) [o[a], o[b]] = [lms[b], lms[a]]; return o; };
+  const kickT = (() => { const an = createAnalyzer(); for (let i = 0; i <= DEMO_LOOP_SEC * 30; i++) { const r = an.update(demoFrameAt(i / 30)); const k = r.events.find((e) => e.type === 'kick'); if (k) return i / 30; } return null; })();
+  ok(kickT != null, '데모에 킥이 있어야 함');
+  const run = (tune) => {
+    const an = createAnalyzer({ tune });
+    for (let i = 0; i <= DEMO_LOOP_SEC * 30; i++) {
+      const f = demoFrameAt(i / 30), sec = i / 30;
+      an.update(sec > kickT + 0.05 && sec < kickT + 0.3 ? { ...f, world: swapLegs(f.world), image: swapLegs(f.image) } : f);
+    }
+    const k = an.summary().kicks; return k.lead + k.rear;
+  };
+  const base = (() => { const an = createAnalyzer(); for (let i = 0; i <= DEMO_LOOP_SEC * 30; i++) an.update(demoFrameAt(i / 30)); const k = an.summary().kicks; return k.lead + k.rear; })();
+  ok(run({ kickOneLegMs: null }) > base, '규칙이 없으면 두 번 셈(시험이 의미 있는지 확인)');
+  eq(run({}), base, '한 번만 셈');
+});
+
+test('무릎: 가드를 올린 채 무릎을 접어 올렸다 내리면 1번 세고, 킥으로는 안 센다', () => {
+  // 가드 자세(데모 0.2초)에서 뒷다리 무릎을 엉덩이 위로 접어 올린 프레임을 0.3초 넣는다
+  const kneeUp = (f) => {
+    const w = f.world.slice();
+    w[26] = { ...w[26], x: -0.12, y: -0.1, z: -0.2 };
+    for (const j of [28, 30, 32]) w[j] = { ...w[j], x: -0.12, y: 0.25, z: -0.15 };
+    return { ...f, world: w, image: w.map((p) => ({ x: 0.5 + p.x * 0.38, y: 0.5 + p.y * 0.38, z: p.z, visibility: p.visibility })) };
+  };
+  const an = createAnalyzer();
+  const guard = demoFrameAt(0.2);
+  for (let i = 0; i < 90; i++) {
+    const t = i * 33;
+    const f = { ...guard, t };
+    an.update(t >= 1000 && t < 1300 ? kneeUp(f) : f);
+  }
+  const s = an.summary();
+  eq([s.totalKnees, s.knees.rear], [1, 1], '뒷 무릎 1번');
+  eq(s.totalKicks, 0, '킥 아님');
+  eq(an.peek().totalKnees, 1, '훈련 중 숫자(peek)에도 무릎');
+  const ev = s.events.find((e) => e.type === 'knee');
+  ok(ev && ev.t >= 1000 && ev.t < 1300, '무릎 시각은 올린 구간 안');
+  eq(createAnalyzer({ tune: { knee: false } }).summary().totalKnees, 0, '끄면 0');
+});
+
+test('무릎: 데모(킥 포함)에서는 무릎을 세지 않음', () => {
+  eq(runDemo(DEMO_LOOP_SEC).totalKnees, 0, '데모 킥은 킥');
+});
+
 test('스파링 구간: 고른 구간 하나가 한 라운드', () => {
   const hit = (t) => ({ t, kind: 'jab', target: 'head', guarded: false });
   const r = scoreRounds({

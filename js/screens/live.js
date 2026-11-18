@@ -37,6 +37,7 @@ export function mount(root, ctx) {
     <div class="counts">
       <div><span class="num" id="cPunch">0</span><span>펀치</span></div>
       <div><span class="num" id="cKick">0</span><span>킥</span></div>
+      <div><span class="num" id="cKnee">0</span><span>무릎</span></div>
       <div><span class="num" id="cGuard">–</span><span>가드 유지</span></div>
     </div>
     <div class="stage live-stage mirror" id="stage">
@@ -105,13 +106,14 @@ export function mount(root, ctx) {
     if (phase === 'countdown') $('#count').textContent = Math.max(1, Math.ceil(remaining));
     if (now0() - modeT > 2000) { upperMode = modeFrames > 10 && upperFrames / modeFrames > 0.5; upperFrames = 0; modeFrames = 0; modeT = now0(); }
     const upper = upperMode;
-    $('#round').textContent = (phase === 'rest' ? `휴식 · 다음은 ${round + 1}라운드` : `라운드 ${round} / ${s.rounds}`) + (upper ? ' · 상체 모드 (킥 제외)' : '');
+    $('#round').textContent = (phase === 'rest' ? `휴식 · 다음은 ${round + 1}라운드` : `라운드 ${round} / ${s.rounds}`) + (upper ? ' · 상체 모드 (킥·무릎 제외)' : '');
     const rec = $('#rec');
     rec.className = 'rec' + (paused ? ' paused' : phase === 'rest' ? ' rest' : '');
     rec.querySelector('span').textContent = paused ? '일시정지됨' : phase === 'rest' ? '휴식 중' : phase === 'work' ? '분석 중' : '준비';
     const p = analyzer.peek();
     $('#cPunch').textContent = p.totalPunches;
     $('#cKick').textContent = p.totalKicks;
+    $('#cKnee').textContent = p.totalKnees;
     $('#cGuard').textContent = p.guardPct != null ? p.guardPct + '%' : '–';
     if (src.kind === 'camera') $('#fps').textContent = `${fps}fps`;
   }
@@ -196,6 +198,8 @@ export function mount(root, ctx) {
       guardDrops: sum.guardDrops,
       totalPunches: sum.totalPunches,
       totalKicks: sum.totalKicks,
+      knees: sum.knees,
+      totalKnees: sum.totalKnees,
       dropTimes: sum.events.filter((e) => e.type === 'guardDrop').slice(0, 300).map((e) => [Math.round(e.t), e.hand]),
       rating: null,
     });

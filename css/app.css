@@ -117,7 +117,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 @keyframes blink { 50% { opacity: .25; } }
 .timer { font-size: 56px; font-weight: 700; text-align: center; line-height: 1; margin-top: 6px; }
 .round { text-align: center; font-size: 13px; color: var(--cam-muted); }
-.counts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 12px 16px 0; }
+.counts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 12px 16px 0; }
 .counts div { background: var(--cam-2); border-radius: 14px; padding: 8px 10px; text-align: center; }
 .counts .num { font-size: 26px; display: block; }
 .counts span:last-child { font-size: 12px; color: var(--cam-muted); }
@@ -150,6 +150,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .bar .track { height: 10px; border-radius: 6px; background: var(--surface-2); overflow: hidden; }
 .bar .fill { height: 100%; border-radius: 6px; background: var(--ink); }
 .bar .fill.kick { background: var(--accent); }
+.bar .fill.knee { background: var(--warn); }
 .strip { position: relative; height: 28px; margin-top: 6px; }
 .strip .track { position: absolute; left: 0; right: 0; top: 12px; height: 4px; border-radius: 2px; background: var(--line); }
 .strip .mk { position: absolute; top: 4px; width: 4px; height: 20px; border-radius: 2px; background: var(--warn); transform: translateX(-50%); }
@@ -177,10 +178,11 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .lane i { position: absolute; top: 2px; width: 2px; height: 8px; border-radius: 1px; transform: translateX(-50%); }
 .lane i.punch { background: var(--ink); }
 .lane i.kick { background: var(--accent); height: 10px; top: 1px; }
+.lane i.knee { background: var(--warn); height: 10px; top: 1px; }
 .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px; }
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; }
-.sw-mk { background: var(--warn); } .sw-punch { background: var(--ink); } .sw-kick { background: var(--accent); }
+.sw-mk { background: var(--warn); } .sw-punch { background: var(--ink); } .sw-kick { background: var(--accent); } .sw-knee { background: var(--warn); }
 .tl-skip { position: absolute; top: 9px; height: 16px; background: var(--muted); opacity: .22; border-radius: 3px; }
 .sw-skip { background: var(--muted); opacity: .35; }
 .sw-gap { background: var(--surface-2); border: 1px dashed var(--muted); }

@@ -62,7 +62,7 @@ export function mount(root, ctx) {
           ${sessions.length ? sessions.slice(0, 5).map((s) => `
             <button class="mode" data-id="${s.id}">
               <span class="ic num" style="font-weight:800;font-size:13px">${dateLabel(s.date)}</span>
-              <span class="grow"><b>${s.source === 'sparring' ? '스파링 분석' : s.source === 'video' ? '영상 분석' : '미트 훈련' + (s.source === 'demo' ? ' · 데모' : '')}</b><span class="muted small">펀치 ${s.totalPunches} · 킥 ${s.totalKicks} · 가드 하락 ${s.guardDrops.lead + s.guardDrops.rear}회</span></span>
+              <span class="grow"><b>${s.source === 'sparring' ? '스파링 분석' : s.source === 'video' ? '영상 분석' : '미트 훈련' + (s.source === 'demo' ? ' · 데모' : '')}</b><span class="muted small">펀치 ${s.totalPunches} · 킥 ${s.totalKicks}${s.totalKnees ? ` · 무릎 ${s.totalKnees}` : ''} · 가드 하락 ${s.guardDrops.lead + s.guardDrops.rear}회</span></span>
               ${s.source === 'sparring'
                 ? `<span class="pill ${s.judge.verdict === 'me' ? 'good' : s.judge.verdict === 'opp' ? 'warn' : 'check'}">${{ me: '나 우세', opp: '상대 우세', draw: '박빙', hold: '판정 보류' }[s.judge.verdict]}</span>`
                 : `<span class="pill ${s.guardPct != null && s.guardPct >= 75 ? 'good' : 'warn'}">${s.guardPct != null ? '가드 ' + s.guardPct + '%' : '인식 부족'}</span>`}

@@ -15,7 +15,7 @@ const FIX = {
   lead: '뻗은 길 그대로 앞손을 턱 앞으로 되돌리세요.',
 };
 const SPEEDS = [0.25, 0.5, 1];
-const SUBJ = { jab: '잽이', cross: '크로스가', hook: '훅이', uppercut: '어퍼컷이', kick: '킥이' };
+const SUBJ = { jab: '잽이', cross: '크로스가', hook: '훅이', uppercut: '어퍼컷이', kick: '킥이', knee: '무릎이' };
 // 판정 보정 데이터 내보내기는 개발자용. 콘솔에서 localStorage.setItem('strikecoach.dev', '1')로 켠다.
 const devMode = () => { try { return localStorage.getItem('strikecoach.dev') === '1'; } catch (_) { return false; } };
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -132,7 +132,7 @@ export function mount(root, ctx) {
       return `<button class="mk ${cls}${m.unsure ? ' low' : ''}" style="left:${pct(m.t)}" data-i="${i}" aria-label="${fmtTime(m.t / 1000)} ${markTitle(m)}">${m.unsure ? '?' : sym}</button>`;
     }).join('');
   }
-  const lane = (evs) => evs.filter((e) => e.type === 'punch' || e.type === 'kick').map((e) => `<i class="${e.type}" style="left:${pct(e.t)}"></i>`).join('');
+  const lane = (evs) => evs.filter((e) => e.type === 'punch' || e.type === 'kick' || e.type === 'knee').map((e) => `<i class="${e.type}" style="left:${pct(e.t)}"></i>`).join('');
 
   function attachVideo(file, mismatch = false) {
     if (!url) url = URL.createObjectURL(file);
@@ -162,7 +162,7 @@ export function mount(root, ctx) {
         <div class="legend small muted">
           <span><i class="sw-mk"></i>내 가드 하락</span>
           ${spar ? '<span><i class="sw-hitme"></i>내 유효타 후보</span><span><i class="sw-hitopp"></i>상대 유효타 후보</span>' : ''}
-          <span><i class="sw-punch"></i>펀치</span><span><i class="sw-kick"></i>킥</span>
+          <span><i class="sw-punch"></i>펀치</span><span><i class="sw-kick"></i>킥</span><span><i class="sw-knee"></i>무릎</span>
           ${skipped.length ? '<span><i class="sw-skip"></i>분석 안 함</span>' : ''}
           ${gaps.length ? `<span><i class="sw-gap"></i>${spar ? '인식 끊김·겹침' : '인식 끊김'}</span>` : ''}
         </div>
@@ -261,7 +261,7 @@ export function mount(root, ctx) {
       $('#detail').innerHTML = marks.length
         ? `<div class="small muted">타임라인의 표시를 누르면 그 장면으로 이동해요.</div>`
         : `<div class="row">${icon('check', 'color:var(--good)')}<span class="grow">표시할 장면이 없어요. 가드가 0.4초 넘게 내려간 순간이 없었어요.</span></div>
-           <div class="small muted" style="margin-top:6px">펀치 ${s.totalPunches}회 · 킥 ${s.totalKicks}회 · 가드 유지율 ${s.guardPct ?? '–'}%${spar ? ` · 내 유효타 후보 ${myHits}` : ''}</div>`;
+           <div class="small muted" style="margin-top:6px">펀치 ${s.totalPunches}회 · 킥 ${s.totalKicks}회${s.totalKnees ? ` · 무릎 ${s.totalKnees}회` : ''} · 가드 유지율 ${s.guardPct ?? '–'}%${spar ? ` · 내 유효타 후보 ${myHits}` : ''}</div>`;
       return;
     }
     if (seek && video) {

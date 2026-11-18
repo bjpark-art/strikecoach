@@ -29,6 +29,7 @@ export function mount(root, ctx) {
     ['유효타 후보 · 몸통', hitsBy('me', 'body'), hitsBy('opp', 'body'), ''],
     ['펀치', s.totalPunches, s.oppStats.totalPunches, ''],
     ['킥', s.totalKicks, s.oppStats.totalKicks, ''],
+    ...(s.totalKnees != null ? [['무릎', s.totalKnees, s.oppStats.totalKnees ?? 0, '']] : []),
     ['가드 유지율', s.guardPct ?? 0, s.oppStats.guardPct ?? 0, '%'],
     ['압박 (전진한 시간)', press('me'), press('opp'), '%'],
   ];

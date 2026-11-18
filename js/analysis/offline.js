@@ -37,6 +37,8 @@ export function sessionStats(summary) {
     guardDrops: summary.guardDrops,
     totalPunches: summary.totalPunches,
     totalKicks: summary.totalKicks,
+    knees: summary.knees,
+    totalKnees: summary.totalKnees,
     durationSec: Math.round(summary.activeMs / 1000),
     dropTimes: summary.events.filter((e) => e.type === 'guardDrop').slice(0, 300).map((e) => [Math.round(e.t), e.hand]),
   };
